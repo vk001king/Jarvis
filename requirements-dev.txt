@@ -1,0 +1,21 @@
+# ── MARK LV — what the test suite needs ───────────────────────────────────────
+# Deliberately NOT requirements.txt. The tests cover the parts of the app that
+# have no window, microphone or model behind them, so they run without PyQt6,
+# PortAudio or an API key:
+#
+#   pip install -r requirements-dev.txt
+#   python -m pytest
+pytest>=8,<10
+
+# Remote dashboard tests (skipped automatically when these are missing).
+fastapi>=0.110,<1
+uvicorn>=0.27,<1
+httpx>=0.27,<1
+python-multipart>=0.0.9,<1
+cryptography>=42,<50
+
+# Office Studio tests.
+python-docx
+openpyxl
+python-pptx
+pillow>=10,<13

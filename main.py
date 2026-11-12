@@ -52,7 +52,7 @@ from ui import JarvisUI
 from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
     save_session_summary, pop_last_session,
-    search_memory, set_trim_notifier,
+    search_memory, set_trim_notifier, remember,
 )
 
 # The file-backed tools (open_app, web_search, browser_control, …) are no longer
@@ -1247,11 +1247,17 @@ class JarvisLive:
             category = args.get("category", "notes")
             key      = args.get("key", "")
             value    = args.get("value", "")
-            if key and value:
-                update_memory({category: {key: {"value": value}}})
-                print(f"[Memory] 💾 save_memory: {category}/{key} = {value}")
+            outcome = remember(key, value, category) if key and value else ""
             if not self.ui.muted:
                 self.ui.set_state("LISTENING")
+            if outcome.startswith("[NOT_SAVED]"):
+                # The one case that is not silent: the user handed over a
+                # credential and should hear where it actually belongs.
+                self.ui.write_log("SYS: A credential was not saved to memory — "
+                                  "use the plugin settings panel instead.")
+                return types.FunctionResponse(
+                    id=fc.id, name=name, response={"result": outcome}
+                )
             return types.FunctionResponse(
                 id=fc.id, name=name,
                 response={"result": "ok", "silent": True}

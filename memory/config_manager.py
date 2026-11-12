@@ -1,6 +1,10 @@
 import json
 import sys
+import threading
 from pathlib import Path
+from typing import Callable
+
+from core.safe_io import read_json_for_update, write_json
 
 def get_base_dir() -> Path:
     if getattr(sys, "frozen", False):
@@ -17,31 +21,55 @@ def ensure_config_dir() -> None:
 def config_exists() -> bool:
     return CONFIG_FILE.exists()
 
+# ── The one place the config file is written ─────────────────────────────────
+# Every setter below goes through _update_config. That buys three things the
+# open-coded read/modify/write blocks they replaced did not have:
+#
+#   * One lock. Settings are saved from the Qt thread, from tool executor
+#     threads and from the dashboard; two of them saving at once used to mean
+#     the second overwrote the first with a copy read before it landed.
+#   * An atomic write, so a crash mid-save cannot leave an empty file.
+#   * A damaged file is copied aside before it is replaced. It used to be read
+#     as {} and written straight back, which turned "one bad byte" into "the
+#     API key and every plugin token are gone".
+_config_lock = threading.RLock()
+
+
+def _update_config(mutate: Callable[[dict], None]) -> None:
+    """Apply ``mutate`` to the stored config and save the result."""
+    with _config_lock:
+        ensure_config_dir()
+        data = read_json_for_update(CONFIG_FILE, "config/api_keys.json")
+        mutate(data)
+        write_json(CONFIG_FILE, data, indent=4)
+
+
+def _patch_config(**fields) -> None:
+    """Set one or more top-level keys without disturbing the rest."""
+    _update_config(lambda data: data.update(fields))
+
+
+def update_config(**fields) -> None:
+    """Public form of ``_patch_config`` for code outside this module (the
+    setup screen, the customisation panel, the camera picker) that used to
+    write the file itself."""
+    _patch_config(**fields)
+
+
 def save_api_keys(gemini_api_key: str) -> None:
-    ensure_config_dir()
-
-    data: dict = {}
-    if CONFIG_FILE.exists():
-        try:
-            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            data = {}
-
-    data["gemini_api_key"] = gemini_api_key.strip()
-
-    CONFIG_FILE.write_text(
-        json.dumps(data, indent=2),
-        encoding="utf-8"
-    )
+    _patch_config(gemini_api_key=gemini_api_key.strip())
 
 def load_api_keys() -> dict:
     if not CONFIG_FILE.exists():
         return {}
     try:
-        return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
     except Exception as e:
         print(f"❌ Failed to load api_keys.json: {e}")
         return {}
+    # A file holding a list or a bare string is as unusable as a missing one,
+    # and every getter below calls .get() on the result.
+    return data if isinstance(data, dict) else {}
 
 def get_gemini_key() -> str | None:
     return load_api_keys().get("gemini_api_key")
@@ -63,16 +91,8 @@ def get_user_name() -> str:
 
 def save_assistant_config(assistant_name: str, user_name: str) -> None:
     """Persist assistant name and user name to config."""
-    ensure_config_dir()
-    data: dict = {}
-    if CONFIG_FILE.exists():
-        try:
-            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            data = {}
-    data["assistant_name"] = assistant_name.strip() or "JARVIS"
-    data["user_name"] = user_name.strip()
-    CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+    _patch_config(assistant_name=assistant_name.strip() or "JARVIS",
+                  user_name=user_name.strip())
 
 
 # ── Assistant voice ──────────────────────────────────────────────────────────
@@ -92,16 +112,8 @@ def get_voice() -> str:
 def save_voice(voice_name: str) -> None:
     """Persist the chosen Live voice. Unknown names collapse to the default so a
     bad value can never reach the API and break the session."""
-    ensure_config_dir()
-    data: dict = {}
-    if CONFIG_FILE.exists():
-        try:
-            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            data = {}
     v = (voice_name or "").strip()
-    data["voice_name"] = v if v in AVAILABLE_VOICES else DEFAULT_VOICE
-    CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+    _patch_config(voice_name=v if v in AVAILABLE_VOICES else DEFAULT_VOICE)
 
 
 def get_wake_word_enabled() -> bool:
@@ -110,15 +122,7 @@ def get_wake_word_enabled() -> bool:
 
 
 def save_wake_word_enabled(enabled: bool) -> None:
-    ensure_config_dir()
-    data: dict = {}
-    if CONFIG_FILE.exists():
-        try:
-            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            data = {}
-    data["wake_word_enabled"] = bool(enabled)
-    CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+    _patch_config(wake_word_enabled=bool(enabled))
 
 
 def get_push_to_talk_enabled() -> bool:
@@ -203,18 +207,12 @@ def get_turn_tuning() -> dict:
 
 
 def save_turn_tuning(values: dict) -> None:
-    ensure_config_dir()
-    data: dict = {}
-    if CONFIG_FILE.exists():
-        try:
-            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            data = {}
-    cur = data.get("turn_tuning")
-    cur = dict(cur) if isinstance(cur, dict) else {}
-    cur.update(values or {})
-    data["turn_tuning"] = cur
-    CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+    def _apply(data: dict) -> None:
+        cur = data.get("turn_tuning")
+        cur = dict(cur) if isinstance(cur, dict) else {}
+        cur.update(values or {})
+        data["turn_tuning"] = cur
+    _update_config(_apply)
 
 
 def get_proactive_audio_enabled() -> bool:
@@ -253,15 +251,7 @@ def save_media_resolution(value: str) -> None:
 
 def _save_flag(key: str, value) -> None:
     """Read-modify-write one key without disturbing the rest of the config."""
-    ensure_config_dir()
-    data: dict = {}
-    if CONFIG_FILE.exists():
-        try:
-            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            data = {}
-    data[key] = bool(value) if isinstance(value, bool) else value
-    CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+    _patch_config(**{key: value})
 
 
 def get_brief_enabled() -> bool:
@@ -269,15 +259,7 @@ def get_brief_enabled() -> bool:
 
 
 def save_brief_enabled(enabled: bool) -> None:
-    ensure_config_dir()
-    data: dict = {}
-    if CONFIG_FILE.exists():
-        try:
-            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            data = {}
-    data["morning_brief_enabled"] = enabled
-    CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+    _patch_config(morning_brief_enabled=bool(enabled))
 
 
 # ── Audio devices ────────────────────────────────────────────────────────────
@@ -286,23 +268,6 @@ def save_brief_enabled(enabled: bool) -> None:
 # at a different microphone. The empty string means "system default", which is
 # both the factory setting and what an unresolvable saved device falls back to —
 # so unplugging a headset degrades to the built-in speakers instead of crashing.
-
-def _patch_config(**fields) -> None:
-    """Read-modify-write one or more keys in api_keys.json.
-
-    Every setter in this file open-coded this. Collapsing it here means a new
-    setting is one line, and there is one place where a corrupt config file is
-    handled instead of nine."""
-    ensure_config_dir()
-    data: dict = {}
-    if CONFIG_FILE.exists():
-        try:
-            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            data = {}
-    data.update(fields)
-    CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
-
 
 def get_input_device() -> str:
     """Microphone device name, or '' for the system default."""
@@ -324,7 +289,8 @@ def save_output_device(name: str) -> None:
 
 def get_plugin_enabled(plugin_name: str) -> bool:
     """Plugins are enabled by default the moment they're discovered (opt-out model)."""
-    return load_api_keys().get("plugins_enabled", {}).get(plugin_name, True)
+    flags = load_api_keys().get("plugins_enabled")
+    return flags.get(plugin_name, True) if isinstance(flags, dict) else True
 
 
 # ── Per-plugin settings ("tokens" / connection details) ───────────────────────
@@ -348,36 +314,24 @@ def get_plugin_setting(namespace: str, key: str, default=None):
 def save_plugin_config(namespace: str, values: dict) -> None:
     """Merge `values` into a namespace's stored config (read-modify-write, like
     every other helper here). Only the provided keys are touched."""
-    ensure_config_dir()
-    data: dict = {}
-    if CONFIG_FILE.exists():
-        try:
-            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            data = {}
-    pc = data.get("plugin_config")
-    if not isinstance(pc, dict):
-        pc = {}
-    cur = pc.get(namespace)
-    if not isinstance(cur, dict):
-        cur = {}
-    cur.update(values)
-    pc[namespace] = cur
-    data["plugin_config"] = pc
-    CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+    def _apply(data: dict) -> None:
+        pc = data.get("plugin_config")
+        if not isinstance(pc, dict):
+            pc = {}
+        cur = pc.get(namespace)
+        if not isinstance(cur, dict):
+            cur = {}
+        cur.update(values or {})
+        pc[namespace] = cur
+        data["plugin_config"] = pc
+    _update_config(_apply)
 
 
 def save_plugin_enabled(plugin_name: str, enabled: bool) -> None:
-    ensure_config_dir()
-    data: dict = {}
-    if CONFIG_FILE.exists():
-        try:
-            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            data = {}
-    plugins_cfg = data.get("plugins_enabled")
-    if not isinstance(plugins_cfg, dict):
-        plugins_cfg = {}
-    plugins_cfg[plugin_name] = enabled
-    data["plugins_enabled"] = plugins_cfg
-    CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+    def _apply(data: dict) -> None:
+        plugins_cfg = data.get("plugins_enabled")
+        if not isinstance(plugins_cfg, dict):
+            plugins_cfg = {}
+        plugins_cfg[plugin_name] = bool(enabled)
+        data["plugins_enabled"] = plugins_cfg
+    _update_config(_apply)

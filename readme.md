@@ -178,6 +178,20 @@ This is not only tidiness. Every bundled skill is declared to the model on **eve
 * **Every launch paid 201 ms for a plugin nobody had asked to use.** Discovery executes every file in `plugins/`, and `youtube_video` imported `requests` and `youtube_transcript_api` at module scope. Deferring one of them would have saved nothing — the transcript library imports `requests` itself. Both are now checked with `find_spec`, which answers "is it installed?" without executing anything, and loaded on first use: **plugin discovery 211 ms → 39 ms**.
 * A plugin that needed a file from a **newer Mark** was rejected with *"pip install core"*. The loader could not tell this project's own packages from a third-party one, so it told people to install a same-named stranger from an index — wrong, and a supply-chain hazard dressed up as a fix. First-party names now say the app is behind the plugin and that there is nothing to install.
 
+### 🛡️ Hardening
+
+A pass over the parts that hold your data, each change covered by a test in `tests/`.
+
+* **`.gitignore` was not ignoring the secrets.** Each rule had its explanation written after it on the same line, and git only reads `#` as a comment at the *start* of a line — so `config/api_keys.json          # your Gemini API key…` was one long pattern that matched nothing. The API key, MCP credentials, TLS private key and OAuth tokens were all offered to `git add`. The comments now sit above their rules, and a test asks git itself whether each secret path is ignored.
+* **A damaged config no longer costs you the API key.** Every setter read the file, fell back to `{}` on any error, and wrote that back — so one bad byte, followed by one changed setting, replaced the key and every plugin token with a single field. Config and memory are now written atomically (temporary file, then rename), saved under one lock, and an unreadable file is copied to `<name>.corrupt-<time>` before anything replaces it. The saved files are owner-only on macOS and Linux.
+* **Re-running setup kept nothing.** The setup screen wrote a fresh two-key file over the existing config. It appears whenever a field is missing, so that meant losing plugin tokens, voice and colour to fix one value. It merges now.
+* **Saves could erase each other.** A fact stored while the daily topic check was on the network was overwritten when the check finished, and a topic added in that window disappeared. Every change to the memory file is now one locked read-modify-write.
+* **Credentials are kept out of memory.** Telling the assistant a token used to file it in `memory/long_term.json` in plain text, list it in the memory panel and send it back to the model on every matching recall. Machine-issued credentials (GitHub, Google, Slack, AWS, JWTs, private keys) are now refused with a pointer to the plugin settings panel, and any already on disk are masked in recall. A password you ask it to remember is still your call — the guard matches formats, not key names.
+* **Facts can no longer land in the bookkeeping.** `save_memory` accepted any category name, so a fact filed under `sessions` or `monitors` overwrote that section, and one filed under an invented name was stored but never shown to the model. Unknown categories go to `notes`.
+* **The phone dashboard counts wrong keys.** The pairing key is six characters and the server listens on the whole LAN; nothing limited guesses. Eight failures from one address now lock it out for five minutes. Malformed request bodies answer `400` instead of crashing the handler, commands are capped at 8,000 characters, and the session table is bounded.
+* **Topics in non-Latin scripts collided.** The monitor filed topics under an ASCII slug, so every topic written in Japanese, Arabic or Cyrillic reduced to the same empty key and the second one was reported as already monitored.
+* **Two Research Studio cards had no styling.** A doubled `}}` outside an f-string made Qt reject both stylesheets on every launch.
+
 > Built on the Mark LI–LIV foundation: the **🧑‍🎤 Holographic Avatar**, **👄 Lip-Sync**, **🎚️ Push-to-Talk**, **🔇 Self-Echo Guard**, **🧩 Plugin System**, **♾️ Unlimited Sessions**, **🎨 Live Theming** and **🎙️ Wake Word** are all still here.
 
 ---
@@ -308,6 +322,15 @@ python main.py
 
 > ⚠️ **Installation Note:** If you hit a `ModuleNotFoundError` for an OS-specific package, install it with `pip install <module_name>`. The optional **wake word** engine is *not* installed here — grab it in one click from **⚙ → WAKE WORD** inside the app.
 
+### Running the tests
+
+The tests cover the parts with no window, microphone or model behind them — config and memory storage, the credential guard, dashboard authentication, the GitHub plugins, Office Studio and the observatory feeds — so they need neither PyQt6 nor an API key:
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
 ### MCP servers and plugins
 
 Open **⚙ → MCP SERVERS** (or **MANAGE MCP + PLUGINS** in the system panel) to add trusted MCP servers. The manager supports local `stdio` commands and remote Streamable HTTP endpoints, and includes starter presets for GitHub, filesystem, and Playwright. Add the credentials or allowed filesystem paths required by a server, then choose **APPLY & RECONNECT**; discovered tools are added to the next Gemini Live session. Failed connections are shown in the manager and the activity log.
@@ -341,6 +364,8 @@ Mark LV/
 ├── ui.py                     # PyQt6 HUD — avatar canvas, waveform, log panel, settings drawer, camera feed
 ├── setup.py                  # OS-aware installer (skips wrong-OS dependencies, checks your Python)
 ├── .gitignore                # Keeps your API key, TLS key and memories out of the repository
+├── requirements-dev.txt      # What the test suite needs — no GUI, audio or API key
+├── tests/                    # python -m pytest
 ├── plugins/
 │   └── _template.py          # Copy this to write a new skill — one file, drop in, done
 ├── actions/                  # Bundled skills — each self-describes via a TOOL dict + handler
@@ -377,6 +402,8 @@ Mark LV/
 │   ├── echo.py               # Tells your voice from the assistant's own echo; self-calibrating
 │   ├── hotkey.py             # Push-to-talk chord — global on Windows, windowed fallback elsewhere
 │   ├── undo.py               # One shared undo stack — actions register how to reverse themselves
+│   ├── safe_io.py            # Atomic JSON saves; a damaged file is set aside, never overwritten
+│   ├── secret_guard.py       # Recognises tokens and keys so they are not stored as memories
 │   ├── confirm.py            # Irreversible-action gate — the token is issued by the UI, not the model
 │   ├── audio_devices.py      # Microphone / speaker list — filtered, measured, resolved by name
 │   ├── plugin_loader.py      # Plugin engine — discovery, validation, crash isolation
@@ -408,7 +435,7 @@ JARVIS has no MARK server, telemetry service, or account. The assistant's local 
 | Gemini API key, plugin credentials | `config/api_keys.json` | **Plaintext.** Anyone with your user account can read it. Treat it like a password file. |
 | MCP server commands, URLs, credentials | `config/mcp_servers.json` | **Plaintext.** Excluded from Git; only configure servers you trust. |
 | Dashboard TLS certificate + private key | `config/certs/` | Generated locally, self-signed, never leaves the machine. |
-| What the assistant remembers about you | `memory/long_term.json` | Delete the file to make it forget everything. |
+| What the assistant remembers about you | `memory/long_term.json` | **Plaintext.** Delete the file to make it forget everything. Tokens and API keys are refused here — they belong in plugin settings. |
 | Observatory ISS / space-weather / market refresh | Public WhereTheISS.at, NOAA SWPC, and Yahoo Finance endpoints | Starts only when you open or refresh God's Eye; no account keys are sent. Yahoo receives the selected ticker. |
 | NASA live video or external reference links | NASA and YouTube; TradingView when opened | Video resolution is user-triggered; in-app playback starts muted. |
 

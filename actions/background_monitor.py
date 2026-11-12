@@ -4,7 +4,6 @@ Checks DDG news once per day per topic; alerts JARVIS when a new headline appear
 No crypto, no finance, no uninvited tracking.
 """
 import hashlib
-import json
 import re
 from datetime import datetime
 from pathlib import Path
@@ -42,16 +41,34 @@ def _load() -> dict:
     data = load_memory().get("monitors", {})
     return data if isinstance(data, dict) else {}
 
-def _save(monitors: dict) -> None:
-    from memory.memory_manager import load_memory, MEMORY_PATH, _lock
-    memory = load_memory()
-    memory["monitors"] = monitors
-    with _lock:
-        MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-        MEMORY_PATH.write_text(
-            json.dumps(memory, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+def _change(edit):
+    """Run ``edit(monitors)`` against the stored topics and save, as one step.
+
+    Every change goes through here so the read and the write happen under the
+    memory lock. Each function used to load the topics, work on that copy and
+    write the whole memory file back — so whatever was saved in between was
+    erased: a fact the model stored, or a topic added while the daily check
+    was still waiting on the network.
+
+    ``edit`` returns the value to hand back; returning None from it means
+    "nothing changed" and skips the write."""
+    from memory.memory_manager import mutate_memory
+
+    outcome = None
+
+    def _apply(memory: dict):
+        nonlocal outcome
+        monitors = memory.get("monitors")
+        if not isinstance(monitors, dict):
+            monitors = {}
+        outcome = edit(monitors)
+        if outcome is None:
+            return False
+        memory["monitors"] = monitors
+        return True
+
+    mutate_memory(_apply)
+    return outcome
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -62,41 +79,58 @@ def add_monitor(topic: str) -> str:
         return "Please specify a topic to monitor."
     if _is_blocked(topic):
         return "I don't monitor crypto or financial topics."
-    monitors = _load()
     slug = _slug(topic)
-    if slug in monitors:
-        return f"Already monitoring: {monitors[slug]['topic']}"
-    monitors[slug] = {
-        "topic":      topic,
-        "added":      datetime.now().strftime("%Y-%m-%d"),
-        "last_check": "",
-        "last_hash":  "",
-    }
-    _save(monitors)
+    if not slug:
+        # A topic with no Latin letters or digits has no slug to file it under.
+        slug = "topic_" + _title_hash(topic)
+    existing = _load().get(slug)
+    if isinstance(existing, dict):
+        return f"Already monitoring: {existing.get('topic', topic)}"
+
+    def _add(monitors: dict):
+        if slug in monitors:
+            return None
+        monitors[slug] = {
+            "topic":      topic,
+            "added":      datetime.now().strftime("%Y-%m-%d"),
+            "last_check": "",
+            "last_hash":  "",
+        }
+        return True
+
+    _change(_add)
     print(f"[Monitor] ➕ Added: {topic}")
     return f"Now monitoring: {topic}"
 
 
 def remove_monitor(topic: str) -> str:
     topic = topic.strip().lower()
-    monitors = _load()
-    # exact slug match first
-    slug = _slug(topic)
-    if slug in monitors:
-        label = monitors.pop(slug)["topic"]
-        _save(monitors)
-        return f"Stopped monitoring: {label}"
-    # partial match fallback
-    for key, val in list(monitors.items()):
-        if topic in val.get("topic", "").lower():
-            label = monitors.pop(key)["topic"]
-            _save(monitors)
-            return f"Stopped monitoring: {label}"
-    return f"Not found in monitored topics: {topic}"
+    if not topic:
+        return "Please specify which topic to stop monitoring."
+
+    def _label(key: str, val) -> str:
+        return str(val.get("topic", key)) if isinstance(val, dict) else key
+
+    def _remove(monitors: dict):
+        # exact slug match first
+        slug = _slug(topic)
+        if slug and slug in monitors:
+            return _label(slug, monitors.pop(slug))
+        # partial match fallback
+        for key, val in list(monitors.items()):
+            if topic in _label(key, val).lower():
+                return _label(key, monitors.pop(key))
+        return None
+
+    label = _change(_remove)
+    if label is None:
+        return f"Not found in monitored topics: {topic}"
+    return f"Stopped monitoring: {label}"
 
 
 def list_monitors() -> list[str]:
-    return [v.get("topic", k) for k, v in _load().items()]
+    return [v.get("topic", k) if isinstance(v, dict) else k
+            for k, v in _load().items()]
 
 
 def check_all() -> list[str]:
@@ -112,9 +146,14 @@ def check_all() -> list[str]:
 
     today   = datetime.now().strftime("%Y-%m-%d")
     alerts  = []
-    changed = False
+    # What this run learned, per topic. Applied to the stored topics at the end
+    # rather than written back as a whole: the searches below take seconds, and
+    # a topic added or removed in that time must survive.
+    updates: dict[str, dict] = {}
 
     for slug, data in monitors.items():
+        if not isinstance(data, dict):
+            continue                     # not a topic record — leave it alone
         if data.get("last_check") == today:
             continue                     # already checked today
 
@@ -122,8 +161,7 @@ def check_all() -> list[str]:
         try:
             results = _ddg_news(topic, max_results=5)
             if not results:
-                monitors[slug]["last_check"] = today
-                changed = True
+                updates[slug] = {"last_check": today}
                 continue
 
             top   = results[0]
@@ -132,13 +170,12 @@ def check_all() -> list[str]:
                 continue
 
             h = _title_hash(title)
-            monitors[slug]["last_check"] = today
-            changed = True
+            updates[slug] = {"last_check": today}
 
             if h == data.get("last_hash"):
                 continue                 # same headline as last check — no alert
 
-            monitors[slug]["last_hash"] = h
+            updates[slug]["last_hash"] = h
 
             snippet = top.get("snippet", "")[:150]
             source  = top.get("source", "")
@@ -153,7 +190,15 @@ def check_all() -> list[str]:
         except Exception as e:
             print(f"[Monitor] ⚠️ Check failed for '{topic}': {e}")
 
-    if changed:
-        _save(monitors)
+    if updates:
+        def _stamp(stored: dict):
+            touched = None
+            for slug, fields in updates.items():
+                if isinstance(stored.get(slug), dict):
+                    stored[slug].update(fields)
+                    touched = True
+            return touched
+
+        _change(_stamp)
 
     return alerts

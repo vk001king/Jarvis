@@ -39,6 +39,9 @@ BASE_DIR    = Path(__file__).resolve().parent.parent
 STATIC_DIR  = Path(__file__).parent / "static"
 PORT        = 8000
 MAX_UPLOAD_MB = 500
+# Longest command a phone may send. Far above anything typed or dictated, and
+# far below what would let one request stuff the model's context.
+MAX_COMMAND_CHARS = 8000
 
 
 def _make_uploads_dir() -> Path:
@@ -451,6 +454,59 @@ def _read(name: str) -> str:
     return (STATIC_DIR / name).read_text(encoding="utf-8")
 
 
+# ── Login throttling ──────────────────────────────────────────────────────────
+# The pairing key is six characters and the server listens on the whole LAN.
+# Nothing used to count wrong guesses, so any device on the same WiFi could
+# keep trying for as long as a key was pending. Each address now gets a small
+# number of failures per window; after that it is told to wait, whether or not
+# its next guess would have been right.
+LOGIN_MAX_FAILURES = 8
+LOGIN_WINDOW_SECS  = 300.0
+# Sessions and paired devices are remembered in memory only. These caps keep a
+# long-running desktop from accumulating them without limit; the oldest go
+# first, and a dropped phone simply pairs again.
+MAX_SESSIONS       = 64
+MAX_DEVICES        = 32
+
+
+class LoginThrottle:
+    """Sliding-window failure counter per client address."""
+
+    def __init__(self, max_failures: int = LOGIN_MAX_FAILURES,
+                 window: float = LOGIN_WINDOW_SECS, clock=time.monotonic):
+        self._max = max_failures
+        self._window = window
+        self._clock = clock
+        self._failures: dict[str, list[float]] = {}
+
+    def _recent(self, client: str) -> list[float]:
+        cutoff = self._clock() - self._window
+        recent = [t for t in self._failures.get(client, ()) if t > cutoff]
+        if recent:
+            self._failures[client] = recent
+        else:
+            self._failures.pop(client, None)
+        return recent
+
+    def retry_after(self, client: str) -> int:
+        """Seconds this client must wait, or 0 when it may try now."""
+        recent = self._recent(client)
+        if len(recent) < self._max:
+            return 0
+        return max(1, int(recent[0] + self._window - self._clock()) + 1)
+
+    def fail(self, client: str) -> None:
+        self._recent(client)
+        self._failures.setdefault(client, []).append(self._clock())
+        # An address that never comes back would otherwise stay in the table.
+        if len(self._failures) > 1024:
+            for other in list(self._failures):
+                self._recent(other)
+
+    def succeed(self, client: str) -> None:
+        self._failures.pop(client, None)
+
+
 # ── DashboardServer ───────────────────────────────────────────────────────────
 
 class DashboardServer:
@@ -472,6 +528,8 @@ class DashboardServer:
         self._device_sessions: dict[str, dict] = {}  # device_token → {session_key}
         self._phone_audio_queue: asyncio.Queue    = asyncio.Queue(maxsize=200)
         self._phone_output_clients: dict[WebSocket, asyncio.Queue] = {}
+        self._throttle                    = LoginThrottle()
+        self._tasks: set[asyncio.Task]    = set()
         self._uploads_dir                 = UPLOADS_DIR
         self._login_html                  = _read("login.html")
         self._app_html                    = _read("app.html")
@@ -509,6 +567,29 @@ class DashboardServer:
         if session_key not in self._aes_cache:
             self._aes_cache[session_key] = _derive_key(session_key)
         return self._aes_cache[session_key]
+
+    def _spawn(self, coro) -> None:
+        """Start a fire-and-forget task and keep it alive until it finishes.
+
+        The event loop holds only a weak reference to a task, so one whose
+        result nobody keeps can be garbage-collected before it has run — the
+        "Remote connection established" line simply never arriving."""
+        task = asyncio.create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    def _issue_token(self, session_key: str) -> str:
+        """Create a bearer token bound to ``session_key``, dropping the oldest
+        sessions once the table is full."""
+        tok = secrets.token_urlsafe(32)
+        self._tokens.add(tok)
+        self._token_keys[tok] = session_key
+        self._aes_key(session_key)                   # pre-derive & cache
+        while len(self._token_keys) > MAX_SESSIONS:
+            oldest = next(iter(self._token_keys))
+            self._token_keys.pop(oldest, None)
+            self._tokens.discard(oldest)
+        return tok
 
     def _decrypt(self, token: str, enc_b64: str) -> str | None:
         sk = self._token_keys.get(token)
@@ -574,6 +655,28 @@ class DashboardServer:
             tok = req.headers.get("authorization", "").removeprefix("Bearer ").strip()
             return bool(tok) and tok in self._tokens
 
+        def _client(req: Request) -> str:
+            return req.client.host if req.client else "unknown"
+
+        def _throttled(req: Request):
+            """A 429 response when this address has guessed wrong too often."""
+            wait = self._throttle.retry_after(_client(req))
+            if not wait:
+                return None
+            return JSONResponse(
+                {"ok": False,
+                 "error": f"Too many failed attempts. Try again in {wait} seconds."},
+                status_code=429, headers={"Retry-After": str(wait)},
+            )
+
+        async def _json_body(req: Request) -> dict | None:
+            """The request body as a JSON object, or None for anything else."""
+            try:
+                body = await req.json()
+            except Exception:
+                return None
+            return body if isinstance(body, dict) else None
+
         # serve CryptoJS from local cache, fallback to CDN redirect
         @app.get("/static/crypto.js")
         async def serve_crypto():
@@ -635,37 +738,42 @@ class DashboardServer:
 
         @app.post("/login")
         async def login(req: Request):
-            body    = await req.json()
+            blocked = _throttled(req)
+            if blocked:
+                return blocked
+            body = await _json_body(req)
+            if body is None:
+                return JSONResponse({"ok": False, "error": "Invalid request"},
+                                    status_code=400)
             entered = str(body.get("pin", "")).strip().upper()
             now     = time.time()
             if entered in self._pending_keys and self._pending_keys[entered] > now:
                 del self._pending_keys[entered]          # one-time use
-                tok = secrets.token_urlsafe(32)
-                self._tokens.add(tok)
-                self._token_keys[tok] = entered
-                self._aes_key(entered)                   # pre-derive & cache
+                self._throttle.succeed(_client(req))
+                tok = self._issue_token(entered)
                 if self._connect_callback:
                     self._connect_callback()
-                asyncio.create_task(self.broadcast(
+                self._spawn(self.broadcast(
                     {"type": "sys", "text": "Remote connection established."}
                 ))
                 # Bearer token in response body — no cookies needed (works on any browser/HTTP)
                 return JSONResponse({"ok": True, "token": tok})
+            self._throttle.fail(_client(req))
             return JSONResponse({"ok": False, "error": "Invalid or expired key"},
                                 status_code=401)
 
         @app.post("/api/qr-login")
         async def qr_login(req: Request):
             """Exchange a QR key only after the phone's browser has loaded the page."""
-            try:
-                body = await req.json()
-            except Exception:
+            blocked = _throttled(req)
+            if blocked:
+                return blocked
+            body = await _json_body(req)
+            if body is None:
                 return JSONResponse({"ok": False, "error": "Invalid request"},
                                     status_code=400)
-            key = body.get("key", "") if isinstance(body, dict) else ""
-            key = str(key).strip().upper()
-            request_id = body.get("request_id", "") if isinstance(body, dict) else ""
-            request_id = str(request_id).strip()
+            key = str(body.get("key", "")).strip().upper()
+            request_id = str(body.get("request_id", "")).strip()
             now = time.time()
             self._qr_logins = {
                 qr_key: login for qr_key, login in self._qr_logins.items()
@@ -679,8 +787,9 @@ class DashboardServer:
 
             previous = self._qr_logins.get(key)
             if previous:
-                if previous["request_id"] == request_id:
+                if secrets.compare_digest(previous["request_id"], request_id):
                     return JSONResponse(previous["response"])
+                self._throttle.fail(_client(req))
                 return JSONResponse(
                     {"ok": False, "error": "This QR link has already been used."},
                     status_code=401,
@@ -688,21 +797,22 @@ class DashboardServer:
 
             expires = self._pending_keys.get(key, 0)
             if expires <= now:
+                self._throttle.fail(_client(req))
                 return JSONResponse(
                     {"ok": False, "error": "This QR link has expired. Generate a new key."},
                     status_code=401,
                 )
             del self._pending_keys[key]
-            tok     = secrets.token_urlsafe(32)
+            self._throttle.succeed(_client(req))
+            tok     = self._issue_token(key)
             dev_tok = secrets.token_urlsafe(32)
-            self._tokens.add(tok)
-            self._token_keys[tok] = key
-            self._aes_key(key)
             self._device_sessions[dev_tok] = {"session_key": key}
+            while len(self._device_sessions) > MAX_DEVICES:
+                self._device_sessions.pop(next(iter(self._device_sessions)), None)
 
             if self._connect_callback:
                 self._connect_callback()
-            asyncio.create_task(self.broadcast(
+            self._spawn(self.broadcast(
                 {"type": "sys", "text": "Remote connection established via QR code."}
             ))
             response = {
@@ -786,21 +896,21 @@ class DashboardServer:
         @app.post("/api/device-login")
         async def device_login_ep(req: Request):
             """Return a fresh auth token for a previously paired device token."""
-            try:
-                body = await req.json()
-            except Exception:
+            # Not throttled, on purpose. A device token is 256 random bits, so
+            # there is nothing to guess — and a phone still holding one from
+            # before the desktop restarted lands here on every launch, which
+            # must not count against the pairing attempt that follows.
+            body = await _json_body(req)
+            if body is None:
                 return JSONResponse({"ok": False}, status_code=400)
-            dev_tok = (body.get("device_token") or "").strip()
+            dev_tok = str(body.get("device_token") or "").strip()
             if not dev_tok or dev_tok not in self._device_sessions:
                 return JSONResponse({"ok": False}, status_code=401)
             session_key = self._device_sessions[dev_tok]["session_key"]
-            tok = secrets.token_urlsafe(32)
-            self._tokens.add(tok)
-            self._token_keys[tok] = session_key
-            self._aes_key(session_key)
+            tok = self._issue_token(session_key)
             if self._connect_callback:
                 self._connect_callback()
-            asyncio.create_task(self.broadcast(
+            self._spawn(self.broadcast(
                 {"type": "sys", "text": "Known device reconnected automatically."}
             ))
             return JSONResponse({"ok": True, "token": tok, "key": session_key})
@@ -818,15 +928,19 @@ class DashboardServer:
         async def command(req: Request):
             if not _auth(req):
                 return JSONResponse({"error": "Unauthorized"}, status_code=401)
-            body  = await req.json()
+            body  = await _json_body(req)
+            if body is None:
+                return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
             token = req.headers.get("authorization", "").removeprefix("Bearer ").strip()
             enc   = body.get("enc", "")
             if enc:
-                text = self._decrypt(token, enc)
+                text = self._decrypt(token, str(enc))
                 if text is None:
                     return JSONResponse({"error": "Decryption failed"}, status_code=400)
             else:
-                text = (body.get("text") or "").strip()
+                text = str(body.get("text") or "").strip()
+            if len(text) > MAX_COMMAND_CHARS:
+                return JSONResponse({"error": "Command is too long"}, status_code=413)
             if text:
                 await self._command_queue.put(text)
                 if self._wake_callback:
@@ -855,9 +969,8 @@ class DashboardServer:
                 return JSONResponse({"error": "Unauthorized"}, status_code=401)
             if not self._control_callback:
                 return JSONResponse({"error": "Remote controls unavailable"}, status_code=503)
-            try:
-                body = await req.json()
-            except Exception:
+            body = await _json_body(req)
+            if body is None:
                 return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
             action = str(body.get("action", "")).strip().lower()
             if action not in {"wake", "sleep", "interrupt"}:
@@ -876,7 +989,7 @@ class DashboardServer:
                 await websocket.close(code=4001)
                 return
             await websocket.accept()
-            asyncio.create_task(self.broadcast(
+            self._spawn(self.broadcast(
                 {"type": "sys", "text": "Phone microphone live."}
             ))
             try:
@@ -891,7 +1004,7 @@ class DashboardServer:
             except WebSocketDisconnect:
                 pass
             finally:
-                asyncio.create_task(self.broadcast(
+                self._spawn(self.broadcast(
                     {"type": "sys", "text": "Phone microphone stopped."}
                 ))
 
@@ -965,7 +1078,7 @@ class DashboardServer:
                         pass
                     return JSONResponse({"error": str(exc)}, status_code=500)
 
-                asyncio.create_task(self.broadcast({
+                self._spawn(self.broadcast({
                     "type": "file_received",
                     "name": dest.name,
                     "size": size,
@@ -1023,11 +1136,17 @@ class DashboardServer:
                     break
             try:
                 while True:
-                    data = await websocket.receive_json()
+                    try:
+                        data = await websocket.receive_json()
+                    except ValueError:
+                        continue      # not JSON — ignore the frame, keep the socket
+                    if not isinstance(data, dict):
+                        continue
                     if data.get("type") == "command":
                         enc = data.get("enc", "")
-                        t   = self._decrypt(tok, enc) if enc else (data.get("text") or "").strip()
-                        if t:
+                        t   = (self._decrypt(tok, str(enc)) if enc
+                               else str(data.get("text") or "").strip())
+                        if t and len(t) <= MAX_COMMAND_CHARS:
                             await self._command_queue.put(t)
                             if self._wake_callback:
                                 self._wake_callback()
@@ -1086,7 +1205,7 @@ class DashboardServer:
         ssl_cert = BASE_DIR / "config" / "certs" / "jarvis.crt"
 
         if use_ssl:
-            asyncio.create_task(self._serve_alias())
+            self._spawn(self._serve_alias())
 
         cfg = uvicorn.Config(
             self.app, host="0.0.0.0", port=PORT, log_level="warning",

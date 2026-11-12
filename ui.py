@@ -4852,7 +4852,7 @@ class MainWindow(QMainWindow):
         topic_card = QFrame()
         topic_card.setStyleSheet(
             f"QFrame {{ background: {C.PANEL}; border: 1px solid {C.BORDER_B}; "
-            "border-radius: 5px; }}"
+            "border-radius: 5px; }"
         )
         topic_layout = QVBoxLayout(topic_card)
         topic_layout.setContentsMargins(12, 10, 12, 10)
@@ -4910,7 +4910,7 @@ class MainWindow(QMainWindow):
         workflow_card = QFrame()
         workflow_card.setStyleSheet(
             f"QFrame {{ background: {C.PANEL}; border: 1px solid {C.BORDER}; "
-            "border-radius: 5px; }}"
+            "border-radius: 5px; }"
         )
         workflow_layout = QVBoxLayout(workflow_card)
         workflow_layout.setContentsMargins(12, 10, 12, 12)
@@ -7389,12 +7389,15 @@ class MainWindow(QMainWindow):
                 voice_changed = True
 
         try:
-            data = _read_full_config()
-            data["assistant_name"] = self._assistant_name
-            data["user_name"] = user_name.strip()
+            # Through the config manager, not a write of our own: it holds
+            # the lock the other setters use, saves atomically, and will not
+            # replace a config it failed to read with these three fields.
+            from memory.config_manager import update_config
+            fields = {"assistant_name": self._assistant_name,
+                      "user_name": user_name.strip()}
             if ui_color:
-                data["ui_color"] = ui_color.strip().lower()
-            API_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+                fields["ui_color"] = ui_color.strip().lower()
+            update_config(**fields)
             self._log.append_log(f"SYS: Identity updated — {display}")
             if color_changed:
                 self._log.append_log(f"SYS: UI colour applied — {ui_color}")
@@ -7744,11 +7747,11 @@ class MainWindow(QMainWindow):
         self._overlay = ov
 
     def _on_setup_done(self, key: str, os_name: str):
-        os.makedirs(CONFIG_DIR, exist_ok=True)
-        API_FILE.write_text(
-            json.dumps({"gemini_api_key": key, "os_system": os_name}, indent=4),
-            encoding="utf-8",
-        )
+        # Merge, never replace. The setup screen also appears when an existing
+        # config is merely missing a field, and writing a fresh two-key file
+        # there used to throw away every plugin token and preference in it.
+        from memory.config_manager import update_config
+        update_config(gemini_api_key=key, os_system=os_name)
         self._ready = True
         if self._overlay:
             self._overlay.hide()

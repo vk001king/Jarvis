@@ -1,9 +1,12 @@
 import json
 import re
 from datetime import datetime
-from threading import Lock
+from threading import RLock
 from pathlib import Path
 import sys
+
+from core.safe_io import read_json_for_update, write_json
+from core.secret_guard import find_secret, mask
 
 
 def get_base_dir() -> Path:
@@ -14,8 +17,20 @@ def get_base_dir() -> Path:
 
 BASE_DIR         = get_base_dir()
 MEMORY_PATH      = BASE_DIR / "memory" / "long_term.json"
-_lock            = Lock()
+# Re-entrant, and held across the whole read-modify-write of every mutation
+# below. It used to guard only the individual read and the individual write,
+# so two threads saving at once — the model storing a fact while the daily
+# monitor check stamped its topics — each read the same file and the slower
+# one wrote the other's change away.
+_lock            = RLock()
 MAX_VALUE_LENGTH = 380
+
+# The categories save_memory may write to. The file also holds bookkeeping
+# sections ("sessions", "monitors") with their own shapes; a fact filed under
+# one of those names used to overwrite or pollute it, and a fact filed under
+# an invented name was stored but never shown in the prompt.
+FACT_CATEGORIES = ("identity", "preferences", "projects",
+                   "relationships", "wishes", "notes")
 
 # ── Why there are two very different numbers here ────────────────────────────
 #
@@ -54,6 +69,13 @@ def _empty_memory() -> dict:
         "notes":         {},
     }
 
+def _with_categories(data: dict) -> dict:
+    for key in _empty_memory():
+        if not isinstance(data.get(key), dict):
+            data[key] = {}
+    return data
+
+
 def load_memory() -> dict:
     if not MEMORY_PATH.exists():
         return _empty_memory()
@@ -61,15 +83,42 @@ def load_memory() -> dict:
         try:
             data = json.loads(MEMORY_PATH.read_text(encoding="utf-8"))
             if isinstance(data, dict):
-                base = _empty_memory()
-                for key in base:
-                    if key not in data:
-                        data[key] = {}
-                return data
+                return _with_categories(data)
             return _empty_memory()
         except Exception as e:
             print(f"[Memory] ⚠️ Load error: {e}")
             return _empty_memory()
+
+
+def _load_for_update() -> dict:
+    """The stored memory, for a caller that is about to write it back.
+
+    Differs from load_memory() in the one case that matters: a file that is
+    present but unreadable. load_memory() answers with an empty memory, which
+    is right for a reader and ruinous for a writer — saving one new fact on top
+    of that empty dict replaced everything the assistant knew. Here the damaged
+    file is copied aside first. Call with _lock held."""
+    return _with_categories(
+        read_json_for_update(MEMORY_PATH, "memory/long_term.json"))
+
+
+def _write(memory: dict) -> None:
+    """Atomic save. Call with _lock held."""
+    write_json(MEMORY_PATH, memory, indent=2, ensure_ascii=False)
+
+
+def mutate_memory(mutate) -> dict:
+    """Run ``mutate(memory)`` on the stored memory and save it, as one step.
+
+    ``mutate`` returns False to say nothing changed and skip the write. This
+    is the only safe way for other modules to change the file: it holds the
+    lock from the read to the write, so concurrent changes cannot erase each
+    other."""
+    with _lock:
+        memory = _load_for_update()
+        if mutate(memory) is not False:
+            _write(memory)
+        return memory
 
 def _all_entries(memory: dict) -> list[tuple]:
     entries = []
@@ -119,12 +168,8 @@ def save_memory(memory: dict) -> None:
     if not isinstance(memory, dict):
         return
     memory = _trim_to_limit(memory)
-    MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _lock:
-        MEMORY_PATH.write_text(
-            json.dumps(memory, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        _write(memory)
 
 
 def _truncate_value(val: str) -> str:
@@ -156,14 +201,45 @@ def _recursive_update(target: dict, updates: dict) -> bool:
     return changed
 
 
+def _normalise_update(memory_update: dict) -> tuple[dict, list[str]]:
+    """Reduce an update to facts that may be stored: {category: {key: value}}.
+
+    Returns the cleaned update and the keys that were refused because their
+    value is a credential. Unknown categories fold into "notes" rather than
+    being dropped — the fact is still worth keeping, it just has no shelf."""
+    clean: dict[str, dict] = {}
+    refused: list[str] = []
+    for category, items in memory_update.items():
+        if not isinstance(items, dict):
+            continue
+        cat = category if category in FACT_CATEGORIES else "notes"
+        for key, value in items.items():
+            raw = value.get("value") if isinstance(value, dict) else value
+            if isinstance(value, dict) and "value" not in value:
+                continue                      # nested groups are not facts
+            if raw is None or not str(key).strip():
+                continue
+            if find_secret(str(raw)) or find_secret(str(key)):
+                refused.append(str(key))
+                continue
+            clean.setdefault(cat, {})[str(key)] = {"value": raw}
+    return clean, refused
+
+
 def update_memory(memory_update: dict) -> dict:
     if not isinstance(memory_update, dict) or not memory_update:
         return load_memory()
-    memory = load_memory()
-    if _recursive_update(memory, memory_update):
-        save_memory(memory)
-        print(f"[Memory] 💾 Saved: {list(memory_update.keys())}")
-    return memory
+    clean, refused = _normalise_update(memory_update)
+    if refused:
+        print(f"[Memory] 🔒 Not stored (looks like a credential): {refused}")
+    if not clean:
+        return load_memory()
+    with _lock:
+        memory = _load_for_update()
+        if _recursive_update(memory, clean):
+            save_memory(memory)
+            print(f"[Memory] 💾 Saved: {list(clean.keys())}")
+        return memory
 
 def _entry_value(entry) -> str:
     """Accept both the {'value': ..., 'updated': ...} shape and a bare string,
@@ -365,7 +441,10 @@ def search_memory(query: str, limit: int = 8) -> str:
                 continue
             s = _score(words, cat, key, val) if words else 1
             if s > 0:
-                rows.append((s, cat, key, val))
+                # Anything stored before the credential guard existed stays
+                # on disk for the user to see and delete in the memory panel,
+                # but it is not sent back to the model.
+                rows.append((s, cat, key, mask(val)))
 
     if not rows:
         return (f"Nothing stored about '{query}'." if query
@@ -401,23 +480,48 @@ def all_entries_for_ui() -> list[dict]:
     rows.sort(key=lambda r: (r["updated"] or "0000-00-00"), reverse=True)
     return rows
 
+CREDENTIAL_REFUSAL = (
+    "[NOT_SAVED] That value is a {kind}, and credentials are never kept in "
+    "memory: the memory file is plain text and its contents are sent back to "
+    "you on recall. Nothing was stored. Tell the user, in one short sentence in "
+    "their own language, that tokens and keys belong in the plugin settings "
+    "panel (or the MCP server settings), where the tools read them from. "
+    "Do not repeat the value."
+)
+
+
 def remember(key: str, value: str, category: str = "notes") -> str:
-    valid = {"identity", "preferences", "projects", "relationships", "wishes", "notes"}
-    if category not in valid:
+    """Store one fact. Returns a sentence for the caller; a refusal starts
+    with ``[NOT_SAVED]`` so the caller can tell it from a success."""
+    key, value = str(key or "").strip(), str(value or "").strip()
+    if not key or not value:
+        return "[NOT_SAVED] A key and a value are both required."
+    kind = find_secret(value) or find_secret(key)
+    if kind:
+        print(f"[Memory] 🔒 Refused to store a {kind} under '{category}'.")
+        return CREDENTIAL_REFUSAL.format(kind=kind)
+    if category not in FACT_CATEGORIES:
         category = "notes"
     update_memory({category: {key: {"value": value}}})
     return f"Remembered: {category}/{key} = {value}"
 
 
 def forget(key: str, category: str = "notes") -> str:
-    memory = load_memory()
-    cat    = memory.get(category, {})
-    if key in cat:
-        del cat[key]
-        memory[category] = cat
-        save_memory(memory)
-        return f"Forgotten: {category}/{key}"
-    return f"Not found: {category}/{key}"
+    found = False
+
+    def _drop(memory: dict):
+        nonlocal found
+        cat = memory.get(category)
+        # Sections such as "sessions" are lists; only fact tables can lose a key.
+        if isinstance(cat, dict) and key in cat:
+            del cat[key]
+            found = True
+            return True
+        return False
+
+    mutate_memory(_drop)
+    return (f"Forgotten: {category}/{key}" if found
+            else f"Not found: {category}/{key}")
 
 
 forget_memory = forget
@@ -433,24 +537,21 @@ def save_session_summary(summary: str, language: str = "") -> None:
     summary = (summary or "").strip()
     if not summary:
         return
-    memory   = load_memory()
-    sessions = memory.get("sessions", [])
-    if not isinstance(sessions, list):
-        sessions = []
     entry: dict = {
         "date":    datetime.now().strftime("%Y-%m-%d"),
-        "summary": summary[:280],
+        "summary": mask(summary[:280]),
     }
     if language:
         entry["language"] = language
-    sessions.append(entry)
-    memory["sessions"] = sessions[-_SESSION_MAX:]
-    with _lock:
-        MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-        MEMORY_PATH.write_text(
-            json.dumps(memory, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+
+    def _append(memory: dict) -> None:
+        sessions = memory.get("sessions", [])
+        if not isinstance(sessions, list):
+            sessions = []
+        sessions.append(entry)
+        memory["sessions"] = sessions[-_SESSION_MAX:]
+
+    mutate_memory(_append)
     print(f"[Memory] 📝 Session saved ({entry['date']}): {summary[:60]}…")
 
 
@@ -464,16 +565,13 @@ def pop_last_session() -> dict | None:
             return None
         try:
             memory   = json.loads(MEMORY_PATH.read_text(encoding="utf-8"))
-            sessions = memory.get("sessions", [])
+            sessions = memory.get("sessions", []) if isinstance(memory, dict) else []
             if not isinstance(sessions, list) or not sessions:
                 return None
             entry = sessions.pop()          # remove the last entry
             memory["sessions"] = sessions
-            MEMORY_PATH.write_text(
-                json.dumps(memory, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
-            return entry
+            _write(memory)
+            return entry if isinstance(entry, dict) else None
         except Exception as e:
             print(f"[Memory] ⚠️ pop_last_session error: {e}")
             return None

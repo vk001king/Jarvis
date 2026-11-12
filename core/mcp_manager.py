@@ -161,13 +161,10 @@ class MCPManager:
         if len(set(names)) != len(names):
             raise ValueError("MCP server names must be unique.")
 
-        self._config_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self._config_path.with_suffix(".json.tmp")
-        temporary.write_text(
-            json.dumps({"servers": validated}, indent=2),
-            encoding="utf-8",
-        )
-        temporary.replace(self._config_path)
+        # Atomic, and readable only by this user: the file carries whatever
+        # tokens the servers were given in their env blocks.
+        from core.safe_io import write_json
+        write_json(self._config_path, {"servers": validated}, indent=2)
         await self._disconnect_all()
         self._servers = validated
         self._states = {}
