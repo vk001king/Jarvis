@@ -1,0 +1,2069 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#030914">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="description" content="Control your JARVIS assistant from your phone.">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <title>JARVIS Mobile</title>
+  <script src="/static/crypto.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:      #030914;
+      --panel:   #07172b;
+      --panel2:  #0a1e35;
+      --surface: rgba(26,111,153,0.10);
+      --border:  rgba(83,229,255,0.20);
+      --accent:  #53e5ff;
+      --adim:    rgba(22,133,176,0.18);
+      --text:    #d9f7ff;
+      --muted:   #6f9bad;
+      --green:   #22c55e;
+      --gdim:    rgba(34,197,94,0.14);
+    }
+    html, body {
+      height: 100%;
+      background:
+        radial-gradient(ellipse at 50% 34%, rgba(9,83,129,.12), transparent 48%),
+        var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+
+    /* ── HEADER ── */
+    header {
+      flex-shrink: 0; display: flex; align-items: center; gap: 10px;
+      padding: 12px 16px; border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, #08182a, #040d19);
+      box-shadow: 0 2px 22px rgba(0,128,190,.10);
+    }
+    .logo { font-size: 15px; font-weight: 700; letter-spacing: 4px; color: #b7f5ff; }
+    .logo em { color: var(--accent); font-style: normal; text-shadow: 0 0 12px rgba(83,229,255,.7); }
+    .pill {
+      display: flex; align-items: center; gap: 6px; padding: 4px 11px;
+      border-radius: 99px; background: var(--surface); border: 1px solid var(--border);
+      font-size: 10px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase;
+      color: var(--muted); transition: all 0.3s;
+    }
+    .pill.on { background: rgba(34,197,94,.10); border-color: rgba(34,197,94,.3); color: var(--green); }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); transition: background 0.3s; }
+    .pill.on .dot { background: var(--green); animation: blink 2s infinite; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.4} }
+    .spacer { flex: 1; }
+    .enc-badge {
+      font-size: 9px; font-weight: 700; letter-spacing: 1.5px; padding: 3px 8px;
+      border-radius: 4px; display: none;
+    }
+    .enc-badge.on  { display: block; background: rgba(34,197,94,0.1); border: 1px solid rgba(34,197,94,0.25); color: var(--green); }
+    .enc-badge.off { display: block; background: rgba(255,100,100,0.08); border: 1px solid rgba(255,100,100,0.2); color: #f87171; }
+    .url { font-size: 10px; font-family: monospace; color: var(--muted); padding: 4px 9px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
+
+    /* ── FEED ── */
+    main { flex: 1; overflow-y: auto; padding: 14px 16px 8px; display: flex; flex-direction: column; gap: 10px; scrollbar-color: #1a6f99 #04101e; }
+    main::-webkit-scrollbar { width: 3px; }
+    main::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .msg { max-width: 82%; padding: 10px 14px; border-radius: 14px; font-size: 14px; line-height: 1.55; animation: pop 0.18s ease; }
+    @keyframes pop { from { opacity:0; transform:translateY(4px); } }
+    .msg-j   { align-self:flex-start; background:linear-gradient(145deg, rgba(10,55,82,.82), rgba(7,23,43,.96)); border:1px solid rgba(83,229,255,.22); border-bottom-left-radius:4px; }
+    .msg-u   { align-self:flex-end;   background:linear-gradient(145deg, rgba(11,37,60,.88), rgba(5,16,30,.96)); border:1px solid var(--border); border-bottom-right-radius:4px; }
+    .msg-sys { align-self:center; font-size:11px; color:var(--muted); padding:2px 0; background:transparent; border:none; letter-spacing:0.3px; }
+    .lbl { font-size:9px; font-weight:700; letter-spacing:2px; text-transform:uppercase; opacity:0.45; margin-bottom:4px; }
+    .msg-j .lbl { color:var(--accent); }
+    .msg-u .lbl { color:var(--muted); text-align:right; }
+
+    /* ── FILE CARD ── */
+    .msg-file {
+      align-self: flex-end;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 14px; border-bottom-right-radius: 4px;
+      padding: 11px 14px; display: flex; align-items: center; gap: 12px;
+      max-width: 82%; animation: pop 0.18s ease;
+    }
+    .fc-icon { font-size: 26px; flex-shrink: 0; }
+    .fc-meta { flex: 1; min-width: 0; }
+    .fc-lbl  { font-size:9px; font-weight:700; letter-spacing:2px; text-transform:uppercase; opacity:0.45; color:var(--muted); margin-bottom:4px; }
+    .fc-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .fc-size { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .fc-bar-wrap { height: 3px; background: var(--border); border-radius: 2px; margin-top: 7px; overflow: hidden; }
+    .fc-bar { height: 100%; width: 0%; background: var(--accent); border-radius: 2px; transition: width 0.12s linear; }
+    .fc-status { font-size: 10px; font-weight: 700; letter-spacing: 1px; flex-shrink: 0; color: var(--muted); }
+    .fc-status.done { color: var(--green); }
+    .fc-status.err  { color: #f87171; }
+    .fc-dl { display:block; margin-top:6px; font-size:11px; color:var(--accent); text-decoration:none; font-weight:600; }
+    .fc-dl:hover { opacity: 0.8; }
+
+    /* ── FOOTER ── */
+    footer { flex-shrink:0; padding:10px 14px; border-top:1px solid var(--border);     background:linear-gradient(180deg, #061528, #030914); display:flex; gap:8px; align-items:center; }
+    #inp { flex:1; padding:11px 14px; background:var(--surface); border:1.5px solid var(--border); border-radius:12px; color:var(--text); font-size:14px; outline:none; transition:border-color 0.15s; }
+    #inp:focus { border-color: var(--accent); }
+    #inp::placeholder { color: var(--muted); }
+    .btn { padding:11px 15px; border:none; border-radius:12px; font-size:11px; font-weight:700; letter-spacing:1.5px; cursor:pointer; transition:opacity 0.15s,transform 0.1s; }
+    .btn:active { transform: scale(0.96); }
+    .btn:hover  { opacity: 0.82; }
+    .btn-send { background: var(--accent); color: #03111e; }
+    .btn-wake { background:var(--surface); border:1px solid var(--border); color:var(--muted); display:none; }
+    .btn-wake.show { display:block; color:var(--green); border-color:rgba(34,197,94,0.35); }
+    .btn-attach {
+      background: var(--surface); border: 1px solid var(--border); color: var(--muted);
+      padding: 11px 13px; font-size: 16px; line-height: 1; border-radius: 12px;
+      cursor: pointer; transition: opacity 0.15s, transform 0.1s; display: flex;
+      align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .btn-attach:hover  { opacity: 0.82; border-color: var(--accent); color: var(--accent); }
+    .btn-attach:active { transform: scale(0.96); }
+
+    /* ── MIC BUTTON ── */
+    #mic-btn {
+      background: var(--surface); border: 1px solid var(--border); color: var(--muted);
+      padding: 11px 13px; font-size: 16px; line-height: 1; border-radius: 12px;
+      cursor: pointer; transition: opacity 0.15s, transform 0.1s, background 0.2s, border-color 0.2s;
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    #mic-btn:hover  { opacity: 0.82; border-color: var(--accent); color: var(--accent); }
+    #mic-btn:active { transform: scale(0.96); }
+    #mic-btn.recording {
+      background: rgba(239,68,68,0.15); border-color: rgba(239,68,68,0.45); color: #ef4444;
+      animation: mic-pulse 1s ease-in-out infinite;
+    }
+    #mic-btn.unsupported { opacity: 0.3; cursor: not-allowed; }
+    @keyframes mic-pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.65;transform:scale(0.97)} }
+
+    /* ── TOAST ── */
+    #toast {
+      position:fixed; top:66px; left:50%; transform:translateX(-50%) translateY(-8px);
+      background:rgba(34,197,94,0.16); border:1px solid rgba(34,197,94,0.4);
+      color:var(--green); font-size:12px; font-weight:700; letter-spacing:1px;
+      padding:7px 18px; border-radius:99px;
+      opacity:0; transition:opacity 0.22s,transform 0.22s;
+      pointer-events:none; white-space:nowrap;
+    }
+    #toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+
+    /* ── MOBILE COMMAND CENTER ── */
+    .install-btn {
+      padding: 7px 10px; border: 1px solid rgba(83,229,255,.32);
+      border-radius: 8px; background: var(--adim); color: var(--text);
+      font-size: 10px; font-weight: 700; letter-spacing: 1px;
+    }
+    .install-btn[hidden], .install-dialog[hidden] { display: none; }
+    .install-dialog {
+      width: min(390px, calc(100% - 32px)); margin: auto; padding: 24px;
+      border: 1px solid rgba(83,229,255,.38); border-radius: 20px;
+      background: radial-gradient(ellipse at 50% 0, rgba(14,132,180,.2), transparent 58%), #07172b;
+      color: var(--text); box-shadow: 0 24px 80px rgba(0,0,0,.62);
+    }
+    .install-dialog::backdrop { background: rgba(3,5,12,.78); backdrop-filter: blur(8px); }
+    .install-dialog h2 { margin: 0 0 8px; color: #b7f5ff; font-size: 20px; }
+    .install-dialog p { color: var(--muted); font-size: 13px; line-height: 1.55; }
+    .install-dialog ol { margin: 16px 0 20px 20px; color: var(--text); font-size: 13px; line-height: 1.8; }
+    .install-dialog button {
+      min-height: 42px; padding: 0 16px; border: 1px solid var(--border);
+      border-radius: 11px; background: var(--surface); color: var(--text);
+      font-size: 11px; font-weight: 800; letter-spacing: 1px;
+    }
+    .install-dialog .install-done { border-color: #1685b0; background: linear-gradient(135deg,#138cb8,#07507f); }
+    .alert-btn {
+      width: 34px; height: 34px; border-radius: 10px;
+      border: 1px solid var(--border); background: var(--surface);
+      color: var(--muted); font-size: 15px;
+    }
+    .alert-btn.enabled { color: var(--green); border-color: rgba(34,197,94,.35); }
+    .hero {
+      position: relative; overflow: hidden; flex: 0 0 auto;
+      width: min(100%, 640px); margin: 6px auto 4px; padding: 25px 20px 21px;
+      text-align: center; border: 1px solid rgba(83,229,255,.24);
+      border-radius: 24px;
+      background: radial-gradient(ellipse at 50% 5%, rgba(14,132,180,.20), transparent 55%),
+                  linear-gradient(145deg, rgba(9,31,53,.97), rgba(4,13,26,.98));
+      box-shadow: 0 18px 60px rgba(0,0,0,.30), 0 0 25px rgba(0,160,220,.08), inset 0 1px rgba(174,245,255,.07);
+    }
+    .hero::after {
+      content: ""; position: absolute; width: 220px; height: 220px; top: -165px; left: calc(50% - 110px);
+      border-radius: 50%; background: rgba(35,196,241,.16); filter: blur(40px); pointer-events: none;
+    }
+    .reactor {
+      position: relative; isolation: isolate; display: grid; place-items: center;
+      width: 116px; height: 116px; margin: 0 auto 12px; border-radius: 50%;
+      background: radial-gradient(circle at 50% 50%, rgba(83,229,255,.10) 0 34%, transparent 36% 48%, rgba(83,229,255,.20) 49% 50%, transparent 51%),
+                  conic-gradient(from 25deg, transparent, rgba(83,229,255,.95), transparent 35%, rgba(30,143,255,.76), transparent 73%, rgba(83,229,255,.86));
+      animation: reactor-spin 12s linear infinite;
+      filter: drop-shadow(0 0 18px rgba(35,196,241,.42));
+    }
+    .reactor::before, .reactor::after {
+      content: ""; position: absolute; inset: 9px; border: 1px solid rgba(137,237,255,.48);
+      border-radius: 50%; animation: reactor-pulse 2.8s ease-in-out infinite;
+    }
+    .reactor::after { inset: 22px; border-color: rgba(83,229,255,.52); animation-delay: -1.4s; }
+    .reactor-core {
+      z-index: 1; display: grid; place-items: center; width: 62px; height: 62px;
+      border-radius: 50%; border: 1px solid rgba(178,246,255,.66);
+      background: radial-gradient(circle at 35% 30%, #c4faff, #22bfe8 42%, #06335a 78%);
+      color: #f0fdff; font-size: 29px; font-weight: 700;
+      box-shadow: inset 0 0 20px rgba(255,255,255,.2), 0 0 26px rgba(35,196,241,.48);
+      animation: reactor-counter 12s linear infinite;
+    }
+    @keyframes reactor-spin { to { transform: rotate(360deg); } }
+    @keyframes reactor-counter { to { transform: rotate(-360deg); } }
+    @keyframes reactor-pulse { 0%,100% { transform: scale(.94); opacity: .48; } 50% { transform: scale(1.05); opacity: .9; } }
+    .hero-kicker { color: #8deeff; font-size: 9px; font-weight: 700; letter-spacing: 3px; }
+    .hero h1 { margin: 7px 0 5px; font-size: clamp(22px, 6vw, 29px); letter-spacing: -.8px; }
+    .hero-copy { color: var(--muted); font-size: 12px; line-height: 1.55; }
+    .hero-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 17px; }
+    .hero-btn {
+      min-height: 46px; border-radius: 13px; border: 1px solid var(--border);
+      background: var(--surface); color: var(--text); font-size: 10px;
+      font-weight: 800; letter-spacing: 1.4px;
+    }
+    .hero-btn.primary {
+      border-color: rgba(83,229,255,.55);
+      background: linear-gradient(135deg, #138cb8, #07507f); color: #effcff;
+      box-shadow: 0 8px 24px rgba(0,141,196,.24);
+    }
+    .telemetry {
+      display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px;
+      width: min(100%, 640px); margin: 0 auto 4px; padding: 9px;
+      border: 1px solid var(--border); border-radius: 14px;
+      background: linear-gradient(135deg, rgba(10,38,61,.82), rgba(5,17,32,.92));
+      box-shadow: inset 0 1px rgba(174,245,255,.035);
+    }
+    .telemetry-item { min-width: 0; padding: 7px 8px; border-left: 1px solid rgba(83,229,255,.16); }
+    .telemetry-item:first-child { border-left: 0; }
+    .telemetry-label { color: var(--muted); font-size: 8px; font-weight: 800; letter-spacing: 1px; white-space: nowrap; }
+    .telemetry-value { display: flex; align-items: center; gap: 5px; margin-top: 6px; color: var(--accent); font: 700 9px 'Courier New', monospace; white-space: nowrap; }
+    .telemetry-value::before { content: ""; width: 5px; height: 5px; flex: 0 0 5px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; }
+    .telemetry-value.good { color: var(--green); }
+    .telemetry-value.warn { color: #fbbf24; }
+    .section-label {
+      display: flex; align-items: center; justify-content: space-between;
+      width: min(100%, 640px); margin: 15px auto 8px; color: var(--muted);
+      font-size: 9px; font-weight: 800; letter-spacing: 2px;
+    }
+    .section-label span:last-child { color: #737d91; font-weight: 600; letter-spacing: .5px; }
+    .control-grid {
+      display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px; width: min(100%, 640px); margin: 0 auto 6px;
+    }
+    .detail-grid {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px; width: min(100%, 640px); margin: 0 auto 12px;
+    }
+    .detail-card {
+      padding: 12px 12px 10px; border-radius: 14px; border: 1px solid var(--border);
+      background: linear-gradient(145deg, rgba(16,52,84,.58), rgba(7,23,43,.84));
+      box-shadow: inset 0 1px rgba(174,245,255,.04);
+    }
+    .detail-top {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      margin-bottom: 8px;
+    }
+    .detail-icon { font-size: 18px; }
+    .detail-title {
+      font-size: 10px; font-weight: 800; letter-spacing: 1.4px; color: var(--muted);
+      text-transform: uppercase;
+    }
+    .detail-pill {
+      padding: 4px 7px; border-radius: 999px; font-size: 8px; font-weight: 700;
+      letter-spacing: 1px; text-transform: uppercase; color: var(--accent);
+      background: rgba(83,229,255,.08); border: 1px solid rgba(83,229,255,.2);
+    }
+    .detail-card p {
+      color: var(--muted); font-size: 11px; line-height: 1.6;
+    }
+    .study-grid {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px; width: min(100%, 640px); margin: 0 auto 10px;
+    }
+    .study-card {
+      min-height: 82px; display: flex; flex-direction: column; justify-content: space-between;
+      gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 14px;
+      background: linear-gradient(145deg, rgba(16,52,84,.58), rgba(7,23,43,.84));
+      color: var(--text); text-align: left;
+    }
+    .study-card strong { font-size: 11px; letter-spacing: .3px; }
+    .study-card span { color: var(--muted); font-size: 10px; line-height: 1.5; }
+    .study-note {
+      width: min(100%, 640px); margin: 0 auto 12px; padding: 10px 12px;
+      border-left: 2px solid var(--accent); border-radius: 0 9px 9px 0;
+      background: rgba(83,229,255,.055); color: var(--muted);
+      font-size: 10px; line-height: 1.55;
+    }
+    .student-studio {
+      width: 100%; padding: 8px 0 12px;
+    }
+    .student-studio[hidden] { display: none; }
+    .student-studio-header {
+      width: min(100%, 640px); margin: 0 auto 16px; padding: 18px;
+      border: 1px solid rgba(83,229,255,.3); border-radius: 18px;
+      background: radial-gradient(ellipse at 10% 0, rgba(14,132,180,.2), transparent 60%),
+                  linear-gradient(145deg, rgba(9,31,53,.97), rgba(4,13,26,.98));
+    }
+    .student-studio-header h2 { margin: 7px 0; font-size: 22px; color: #d9f7ff; }
+    .student-studio-header p { color: var(--muted); font-size: 11px; line-height: 1.6; }
+    .studio-back {
+      margin-top: 13px; padding: 8px 11px; border: 1px solid var(--border);
+      border-radius: 9px; background: var(--surface); color: var(--text);
+      font-size: 9px; font-weight: 800; letter-spacing: 1px;
+    }
+    .studio-nav { padding: 7px 9px; font-size: 9px; }
+    .studio-capabilities {
+      width: min(100%, 640px); margin: 0 auto 14px; padding: 12px;
+      border: 1px solid var(--border); border-radius: 13px;
+      background: rgba(7,23,43,.76);
+    }
+    .studio-capabilities h3 { margin-bottom: 7px; color: var(--accent); font-size: 10px; letter-spacing: 1.4px; }
+    .studio-capabilities p { color: var(--muted); font-size: 10px; line-height: 1.65; }
+    .student-studio .section-label { margin-top: 14px; }
+    .student-studio .study-grid { margin-bottom: 8px; }
+    .student-studio .study-card { cursor: pointer; }
+    body.student-mode #feed > :not(#student-studio-view):not(#messages) { display: none !important; }
+    .control-card {
+      min-height: 75px; padding: 12px 8px; display: flex; flex-direction: column;
+      align-items: flex-start; justify-content: space-between; gap: 7px;
+      border-radius: 14px; border: 1px solid var(--border);
+      background: linear-gradient(145deg, rgba(255,255,255,.055), rgba(255,255,255,.018));
+      color: var(--text); text-align: left; font: inherit; cursor: pointer;
+    }
+    .control-card:active, .control-card.selected { border-color: rgba(83,229,255,.62); background: var(--adim); }
+    .control-icon { font-size: 18px; line-height: 1; }
+    .control-name { color: #cbd2e1; font-size: 10px; font-weight: 700; }
+    .quick-actions { display: grid; gap: 8px; width: min(100%, 640px); margin: 0 auto 12px; }
+    .quick-action {
+      padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px;
+      background: var(--surface); color: var(--text); text-align: left;
+      font: inherit; font-size: 13px; cursor: pointer;
+    }
+    .quick-action:active { border-color: var(--accent); background: var(--adim); }
+    .feed-label {
+      width: min(100%, 640px); margin: 12px auto 2px; padding-top: 13px;
+      border-top: 1px solid var(--border); color: var(--muted);
+      font-size: 9px; font-weight: 800; letter-spacing: 2px;
+    }
+    .boot-screen {
+      position: fixed; z-index: 20; inset: 0; display: grid; place-items: center;
+      background: radial-gradient(ellipse at 50% 44%, #092744, #050f1e 55%, #030914);
+      transition: opacity .55s ease, visibility .55s ease;
+    }
+    .boot-screen.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+    .boot-content { text-align: center; }
+    .boot-content .reactor { width: 148px; height: 148px; margin-bottom: 26px; }
+    .boot-content .reactor-core { width: 78px; height: 78px; font-size: 35px; }
+    .boot-title { font-size: 12px; font-weight: 800; letter-spacing: 6px; }
+    .boot-caption { margin-top: 10px; color: #6f9bad; font-size: 10px; letter-spacing: 2px; }
+    .boot-dots::after { content: ""; animation: loading-dots 1.3s steps(4, end) infinite; }
+    @keyframes loading-dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75%,100% { content: "..."; } }
+    .attention-overlay {
+      position: fixed; z-index: 30; inset: 0; display: grid; place-items: center;
+      overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y;
+      padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom));
+      background: rgba(3,5,12,.82); backdrop-filter: blur(12px);
+    }
+    .attention-overlay[hidden] { display: none; }
+    .attention-card {
+      width: min(100%, 370px); padding: 25px 20px 20px; text-align: center;
+      min-height: 0; max-height: calc(100vh - 48px);
+      max-height: calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+      overflow-y: auto; overscroll-behavior: contain;
+      border: 1px solid rgba(83,229,255,.42); border-radius: 23px;
+      background: radial-gradient(ellipse at 50% 0, rgba(14,132,180,.24), transparent 60%), #07172b;
+      box-shadow: 0 24px 80px rgba(0,0,0,.5);
+    }
+    .attention-card.calling { animation: incoming-call 1.8s ease-in-out infinite; }
+    @keyframes incoming-call {
+      0%, 100% { box-shadow: 0 24px 80px rgba(0,0,0,.5), 0 0 0 rgba(83,229,255,0); }
+      50% { box-shadow: 0 24px 80px rgba(0,0,0,.5), 0 0 30px rgba(83,229,255,.23); }
+    }
+    .attention-card .reactor { width: 82px; height: 82px; margin-bottom: 14px; }
+    .attention-card .reactor-core { width: 46px; height: 46px; font-size: 21px; }
+    .call-active { padding-top: 6px; }
+    .call-active[hidden] { display: none; }
+    .call-active .reactor { width: 142px; height: 142px; margin: 8px auto 21px; }
+    .call-active .reactor-core { width: 78px; height: 78px; font-size: 34px; }
+    .call-active.connected .reactor { animation-duration: 7s; filter: drop-shadow(0 0 26px rgba(83,229,255,.62)); }
+    .call-active.connected .reactor::before,
+    .call-active.connected .reactor::after { animation-duration: 1.35s; }
+    .call-duration { margin-top: 12px; color: var(--accent); font: 700 14px 'Courier New', monospace; letter-spacing: 2px; }
+    .call-status { min-height: 17px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: 2px; }
+    .call-controls { display: flex; justify-content: center; gap: 12px; margin-top: 24px; }
+    .call-controls button {
+      min-width: 76px; min-height: 58px; padding: 8px 12px;
+      border: 1px solid var(--border); border-radius: 15px;
+      background: var(--surface); color: var(--text); font-size: 10px;
+      font-weight: 800; letter-spacing: .8px;
+    }
+    .call-controls .end-call { min-width: 94px; border-color: rgba(248,113,113,.45); background: rgba(190,36,53,.28); color: #ffb1b8; }
+    .call-controls .call-control-icon { display: block; margin-bottom: 5px; font-size: 18px; }
+    .call-output-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; margin-top: 18px; color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: 1px; }
+    .call-output-row select {
+      max-width: min(185px, 100%); padding: 8px 10px; border: 1px solid var(--border);
+      border-radius: 9px; background: #07172b; color: var(--text); font-size: 11px;
+    }
+    .call-wave { display: flex; align-items: center; justify-content: center; gap: 4px; height: 22px; margin-top: 14px; }
+    .call-wave i { width: 3px; height: 5px; border-radius: 3px; background: var(--accent); opacity: .5; }
+    .call-active.connected .call-wave i { animation: call-wave 680ms ease-in-out infinite alternate; }
+    .call-wave i:nth-child(3n) { animation-delay: -410ms; }
+    .call-wave i:nth-child(3n + 1) { animation-delay: -190ms; }
+    @keyframes call-wave { from { height: 5px; opacity: .42; } to { height: 18px; opacity: 1; } }
+    .attention-kicker { color: #8deeff; font-size: 9px; font-weight: 800; letter-spacing: 3px; }
+    .attention-card h2 { margin: 8px 0; font-size: 23px; }
+    .attention-card p { color: #a1c8d6; font-size: 13px; line-height: 1.6; }
+    .attention-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 19px; }
+    .attention-actions button { min-height: 45px; border: 1px solid var(--border); border-radius: 12px; color: var(--text); background: var(--surface); font-size: 10px; font-weight: 800; letter-spacing: 1px; }
+    .attention-actions .answer { color: #effcff; border-color: #1685b0; background: linear-gradient(135deg,#138cb8,#07507f); }
+
+    @media (max-width: 600px) {
+      html, body { min-height: 100%; }
+      header {
+        gap: 8px; padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
+      }
+      .logo { font-size: 14px; letter-spacing: 4px; }
+      .pill { padding: 5px 9px; font-size: 9px; letter-spacing: 1px; }
+      .enc-badge, .url { display: none !important; }
+      main { padding: 12px 12px 14px; }
+      .msg, .msg-file { max-width: 92%; }
+      .hero { border-radius: 20px; padding: 22px 15px 17px; }
+      .student-studio-header { padding: 15px; }
+      .student-studio-header h2 { font-size: 19px; }
+      .studio-nav { padding: 7px; font-size: 8px; letter-spacing: .5px; }
+      .study-grid { gap: 7px; }
+      .study-card { min-height: 88px; padding: 10px; }
+      .reactor { width: 102px; height: 102px; }
+      .reactor-core { width: 55px; height: 55px; }
+      .control-grid { gap: 7px; }
+      .control-card { min-height: 70px; padding: 10px 8px; }
+      footer {
+        flex-shrink: 0;
+        display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px; padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
+      }
+      #inp {
+        grid-column: 1 / -1; width: 100%; min-width: 0;
+        padding: 13px 14px; font-size: 16px;
+      }
+      .btn-attach, #mic-btn, .btn-wake, .btn-send {
+        width: 100%; min-height: 44px; justify-content: center;
+      }
+      .btn-attach { grid-column: 1; }
+      #mic-btn { grid-column: 2; }
+      .btn-wake { grid-column: 3; }
+      .btn-send { grid-column: 4; }
+      .btn-attach, #mic-btn { font-size: 18px; }
+      .btn { padding: 10px 8px; font-size: 10px; letter-spacing: 1px; }
+      #toast { top: calc(58px + env(safe-area-inset-top)); }
+    }
+    @media (max-width: 360px) {
+      header { padding-left: 9px; padding-right: 9px; }
+      main { padding-left: 9px; padding-right: 9px; }
+      footer { gap: 6px; padding-left: 8px; padding-right: 8px; }
+    }
+
+    /* Cybernetic command-center skin */
+    :root {
+      --bg: #05090b;
+      --panel: #091316;
+      --panel2: #0c1b1d;
+      --surface: rgba(57,245,180,.055);
+      --border: rgba(85,255,190,.22);
+      --accent: #62ffad;
+      --adim: rgba(37,232,146,.12);
+      --text: #e0fff0;
+      --muted: #79a994;
+      --green: #70ff9e;
+      --gdim: rgba(43,255,130,.12);
+    }
+    html, body {
+      background:
+        radial-gradient(ellipse at 50% 0, rgba(20,115,91,.18), transparent 38%),
+        radial-gradient(ellipse at 100% 85%, rgba(12,86,111,.13), transparent 35%),
+        #05090b;
+    }
+    body { position: relative; isolation: isolate; }
+    body::before, body::after {
+      content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    }
+    body::before {
+      opacity: .20;
+      background-image:
+        linear-gradient(rgba(99,255,177,.075) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(99,255,177,.075) 1px, transparent 1px);
+      background-size: 34px 34px;
+      mask-image: linear-gradient(to bottom, black, transparent 82%);
+    }
+    body::after {
+      opacity: .16;
+      background: repeating-linear-gradient(
+        to bottom, transparent 0, transparent 3px, rgba(114,255,188,.045) 4px
+      );
+    }
+    header, main, footer { position: relative; z-index: 1; }
+    header {
+      padding: 11px 18px;
+      border-bottom: 1px solid rgba(98,255,173,.28);
+      background: linear-gradient(90deg, rgba(6,17,17,.97), rgba(7,14,17,.94));
+      box-shadow: 0 8px 32px rgba(0,0,0,.32), 0 1px rgba(98,255,173,.08);
+    }
+    .logo {
+      font-family: 'Courier New', monospace;
+      letter-spacing: 5px;
+      text-shadow: 0 0 18px rgba(98,255,173,.22);
+    }
+    .logo em { color: var(--accent); text-shadow: 0 0 14px rgba(98,255,173,.85); }
+    .pill, .url, .enc-badge, .install-btn, .alert-btn {
+      border-radius: 4px;
+      font-family: 'Courier New', monospace;
+    }
+    .pill { background: rgba(13,36,31,.72); }
+    .pill.on { box-shadow: 0 0 16px rgba(72,255,147,.11); }
+    main { padding-top: 20px; scrollbar-color: rgba(98,255,173,.35) #05090b; }
+    main::-webkit-scrollbar-thumb { background: rgba(98,255,173,.4); }
+    .hero {
+      display: grid;
+      grid-template-columns: 132px minmax(0, 1fr);
+      grid-template-rows: auto auto auto auto;
+      align-items: center;
+      column-gap: 22px;
+      width: min(100%, 760px);
+      min-height: 210px;
+      padding: 25px 28px;
+      text-align: left;
+      border: 1px solid rgba(98,255,173,.32);
+      border-radius: 7px;
+      background:
+        linear-gradient(120deg, rgba(10,31,27,.88), rgba(4,12,16,.96) 62%),
+        var(--panel);
+      box-shadow: 0 18px 55px rgba(0,0,0,.32), inset 0 0 36px rgba(55,255,162,.035);
+    }
+    .hero::before {
+      content: "JARVIS // REMOTE NODE";
+      position: absolute; top: 12px; right: 15px;
+      color: rgba(123,255,188,.45);
+      font: 700 8px 'Courier New', monospace; letter-spacing: 1.8px;
+    }
+    .hero::after {
+      content: ""; position: absolute; inset: 0; pointer-events: none;
+      opacity: .18;
+      background: linear-gradient(90deg, transparent 0 72%, rgba(98,255,173,.08) 72% 72.2%, transparent 72.2%);
+    }
+    .hero .reactor {
+      grid-column: 1; grid-row: 1 / 5;
+      width: 118px; height: 118px; margin: 0;
+    }
+    .hero-kicker {
+      grid-column: 2; align-self: end;
+      color: var(--accent); font: 700 9px 'Courier New', monospace;
+      letter-spacing: 2.8px;
+    }
+    .hero h1 {
+      grid-column: 2; margin: 8px 0 2px;
+      font: 700 clamp(23px, 5vw, 34px) 'Courier New', monospace;
+      letter-spacing: -1.5px; text-shadow: 0 0 24px rgba(98,255,173,.15);
+    }
+    .hero-copy {
+      grid-column: 2; max-width: 420px;
+      color: #8fb9a4; font-size: 12px;
+    }
+    .hero-actions {
+      grid-column: 2; display: flex; max-width: 310px;
+      margin-top: 13px;
+    }
+    .hero-btn, .studio-back, .install-btn, .alert-btn { font-family: 'Courier New', monospace; }
+    .hero-btn {
+      min-height: 40px; border-radius: 4px;
+      font-size: 9px; letter-spacing: 1.4px;
+    }
+    .hero-btn.primary {
+      border-color: rgba(98,255,173,.58);
+      background: linear-gradient(110deg, #123f30, #126047);
+      color: #dcffed; box-shadow: 0 0 22px rgba(48,255,151,.12);
+    }
+    .reactor {
+      filter: drop-shadow(0 0 20px rgba(68,255,160,.32));
+      background:
+        radial-gradient(circle at 50% 50%, rgba(98,255,173,.10) 0 34%, transparent 36% 48%, rgba(98,255,173,.24) 49% 50%, transparent 51%),
+        conic-gradient(from 25deg, transparent, rgba(98,255,173,.92), transparent 35%, rgba(23,182,132,.72), transparent 73%, rgba(98,255,173,.88));
+    }
+    .reactor::before, .reactor::after { border-color: rgba(125,255,190,.55); }
+    .reactor-core {
+      border-color: rgba(178,255,215,.7);
+      background: radial-gradient(circle at 35% 30%, #d9ffed, #48e99a 42%, #073a2b 82%);
+      box-shadow: inset 0 0 20px rgba(255,255,255,.2), 0 0 28px rgba(55,255,161,.4);
+    }
+    .telemetry {
+      width: min(100%, 760px); gap: 8px; padding: 8px;
+      border-color: rgba(98,255,173,.19); border-radius: 5px;
+      background: rgba(6,17,18,.84);
+    }
+    .telemetry-item {
+      border: 1px solid rgba(98,255,173,.12); border-radius: 3px;
+      background: linear-gradient(140deg, rgba(25,60,48,.25), rgba(4,14,16,.2));
+    }
+    .telemetry-value { font-size: 10px; }
+    .section-label {
+      width: min(100%, 760px); padding: 0 0 7px;
+      border-bottom: 1px solid rgba(98,255,173,.15);
+      font-family: 'Courier New', monospace;
+    }
+    .section-label span:last-child { color: #638c78; }
+    .detail-grid, .study-grid, .control-grid, .quick-actions, .feed-label {
+      width: min(100%, 760px);
+    }
+    .detail-card, .study-card, .control-card {
+      position: relative; overflow: hidden;
+      border-color: rgba(98,255,173,.18); border-radius: 5px;
+      background: linear-gradient(145deg, rgba(11,35,29,.82), rgba(5,14,17,.96));
+      box-shadow: inset 0 1px rgba(174,255,217,.025);
+      transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+    }
+    .study-card, .control-card { cursor: pointer; }
+    .detail-card::before, .study-card::before, .control-card::before {
+      content: ""; position: absolute; top: 0; left: 12px; right: 12px; height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(98,255,173,.55), transparent);
+      opacity: .55;
+    }
+    .study-card:hover, .control-card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(98,255,173,.52);
+      box-shadow: 0 8px 24px rgba(0,0,0,.24), 0 0 18px rgba(44,255,150,.08);
+    }
+    .study-card strong, .control-name {
+      color: #d7ffe8; font-family: 'Courier New', monospace; letter-spacing: .5px;
+    }
+    .detail-title, .detail-pill, .detail-card p, .study-card span, .study-note {
+      font-family: 'Courier New', monospace;
+    }
+    .detail-pill {
+      border-radius: 3px; color: var(--accent);
+      background: rgba(98,255,173,.065); border-color: rgba(98,255,173,.25);
+    }
+    .study-note {
+      border-left-color: var(--accent);
+      background: rgba(51,255,154,.045); color: #8fb9a4;
+    }
+    .student-studio-header {
+      width: min(100%, 760px); border-color: rgba(98,255,173,.36);
+      border-radius: 6px;
+      background: radial-gradient(ellipse at 10% 0, rgba(33,156,106,.17), transparent 60%),
+                  linear-gradient(145deg, rgba(8,27,24,.98), rgba(4,12,15,.98));
+      box-shadow: inset 0 0 38px rgba(56,255,157,.035);
+    }
+    .student-studio-header h2 {
+      font: 700 26px 'Courier New', monospace;
+      letter-spacing: -1px; text-transform: uppercase;
+    }
+    .studio-capabilities {
+      width: min(100%, 760px); border-radius: 5px;
+      background: rgba(5,17,16,.82); border-color: rgba(98,255,173,.2);
+    }
+    .quick-action {
+      border-radius: 4px; background: rgba(7,26,23,.82);
+      font-family: 'Courier New', monospace;
+    }
+    .msg {
+      border-radius: 5px; font-family: 'Segoe UI', sans-serif;
+      box-shadow: 0 8px 24px rgba(0,0,0,.18);
+    }
+    .msg-j {
+      border-color: rgba(98,255,173,.25);
+      background: linear-gradient(145deg, rgba(10,45,33,.88), rgba(5,17,17,.97));
+    }
+    .msg-u {
+      border-color: rgba(70,206,173,.24);
+      background: linear-gradient(145deg, rgba(13,37,35,.92), rgba(5,15,18,.97));
+    }
+    .msg-j .lbl { color: var(--accent); }
+    footer {
+      border-top-color: rgba(98,255,173,.25);
+      background: linear-gradient(180deg, rgba(7,20,19,.98), rgba(4,10,12,.99));
+      box-shadow: 0 -12px 35px rgba(0,0,0,.25);
+    }
+    #inp {
+      border-radius: 4px; border-color: rgba(98,255,173,.22);
+      background: rgba(4,15,15,.95);
+      font-family: 'Courier New', monospace;
+      box-shadow: inset 0 0 18px rgba(49,255,147,.025);
+    }
+    #inp:focus {
+      border-color: rgba(98,255,173,.75);
+      box-shadow: 0 0 0 2px rgba(98,255,173,.08), 0 0 20px rgba(49,255,147,.1);
+    }
+    .btn-send {
+      border-radius: 4px; background: linear-gradient(110deg, #58f6a0, #9bffc1);
+      box-shadow: 0 0 20px rgba(74,255,159,.16);
+      font-family: 'Courier New', monospace;
+    }
+    .btn-attach, #mic-btn, .btn-wake {
+      border-radius: 4px; border-color: rgba(98,255,173,.23);
+      color: #a7d7bb;
+    }
+    .install-btn, .alert-btn {
+      border-radius: 4px; border-color: rgba(98,255,173,.26);
+      color: #b6e9ca; background: rgba(10,33,27,.75);
+    }
+    .attention-card, .install-dialog {
+      border-radius: 6px; border-color: rgba(98,255,173,.42);
+      background: radial-gradient(ellipse at 50% 0, rgba(33,156,106,.19), transparent 60%), #071412;
+      box-shadow: 0 24px 80px rgba(0,0,0,.6), 0 0 35px rgba(50,255,151,.08);
+    }
+    .attention-kicker, .boot-title { color: var(--accent); }
+    .boot-screen {
+      background:
+        linear-gradient(rgba(98,255,173,.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(98,255,173,.045) 1px, transparent 1px),
+        radial-gradient(ellipse at 50% 44%, #0b2b20, #07110f 55%, #030708);
+      background-size: 28px 28px, 28px 28px, auto;
+    }
+    .boot-caption { color: #7fb99a; font-family: 'Courier New', monospace; }
+    #toast { z-index: 25; border-radius: 4px; font-family: 'Courier New', monospace; }
+    button:focus-visible, a:focus-visible, #inp:focus-visible {
+      outline: 2px solid #9dffca; outline-offset: 3px;
+    }
+    @media (max-width: 600px) {
+      .hero {
+        grid-template-columns: 82px minmax(0, 1fr);
+        column-gap: 12px; min-height: 170px; padding: 23px 13px 15px;
+        border-radius: 5px;
+      }
+      .hero .reactor { width: 76px; height: 76px; }
+      .hero .reactor-core { width: 43px; height: 43px; font-size: 22px; }
+      .hero::before { top: 7px; right: 8px; font-size: 6px; }
+      .hero h1 { font-size: clamp(18px, 5vw, 26px); }
+      .hero-kicker { font-size: 7px; letter-spacing: 1.6px; }
+      .hero-copy { font-size: 10px; }
+      .hero-actions { gap: 6px; margin-top: 8px; }
+      .hero-btn { min-height: 36px; padding: 7px 8px; font-size: 8px; letter-spacing: .7px; }
+      .telemetry { gap: 5px; padding: 6px; }
+      .telemetry-item { padding: 6px 5px; }
+      .telemetry-label { font-size: 7px; letter-spacing: .5px; }
+      .telemetry-value { font-size: 8px; }
+      .section-label { letter-spacing: 1px; font-size: 8px; }
+      .section-label span:last-child { font-size: 7px; }
+    }
+    @media (max-width: 360px) {
+      header { gap: 5px; padding: 8px; }
+      .logo { font-size: 12px; letter-spacing: 2px; }
+      .pill { padding: 4px 6px; font-size: 8px; letter-spacing: .5px; }
+      .alert-btn { width: 30px; height: 30px; flex-shrink: 0; }
+      .studio-nav, #install-btn {
+        flex-shrink: 0; padding: 5px; font-size: 7px;
+        letter-spacing: .4px; white-space: nowrap;
+      }
+      .hero { grid-template-columns: 64px minmax(0, 1fr); column-gap: 9px; }
+      .hero .reactor { width: 60px; height: 60px; }
+      .hero .reactor-core { width: 36px; height: 36px; }
+      .hero-actions { flex-wrap: wrap; }
+      .hero-btn { min-height: 32px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: .01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="boot-screen" id="boot-screen" aria-live="polite">
+    <div class="boot-content">
+      <div class="reactor"><div class="reactor-core">J</div></div>
+      <div class="boot-title">J.A.R.V.I.S.</div>
+      <div class="boot-caption">NEURAL LINK // <span class="boot-dots">CONNECTING</span></div>
+    </div>
+  </div>
+  <section class="attention-overlay" id="attention" role="alertdialog" aria-modal="true" aria-label="JARVIS needs your attention" hidden>
+    <div class="attention-card" id="attention-card">
+      <div id="incoming-call">
+        <div class="reactor"><div class="reactor-core">J</div></div>
+        <div class="attention-kicker" id="attention-kicker">INCOMING ATTENTION</div>
+        <h2 id="attention-title">JARVIS needs you</h2>
+        <p id="attention-text"></p>
+        <div class="attention-actions">
+          <button class="answer" id="attention-answer" type="button">ANSWER</button>
+          <button id="attention-dismiss" type="button">NOT NOW</button>
+        </div>
+      </div>
+      <div class="call-active" id="call-active" hidden>
+        <div class="reactor"><div class="reactor-core">J</div></div>
+        <div class="attention-kicker">J.A.R.V.I.S. • SECURE CALL</div>
+        <div class="call-status" id="call-status">CONNECTING AUDIO</div>
+        <div class="call-duration" id="call-duration">00:00</div>
+        <div class="call-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="call-controls">
+          <button id="call-mute" type="button" aria-pressed="false"><span class="call-control-icon">🎙</span>MUTE</button>
+          <button id="call-retry" type="button" hidden><span class="call-control-icon">↻</span>RETRY</button>
+          <button id="call-end" class="end-call" type="button"><span class="call-control-icon">☎</span>END CALL</button>
+        </div>
+        <label class="call-output-row" for="call-output">AUDIO OUTPUT
+          <select id="call-output" aria-label="Phone call audio output">
+            <option value="default">Default speaker / headset</option>
+          </select>
+        </label>
+      </div>
+    </div>
+  </section>
+  <div id="toast"></div>
+  <dialog class="install-dialog" id="install-guide" aria-labelledby="install-title">
+    <h2 id="install-title">Install JARVIS</h2>
+    <p id="install-intro">Add the command center to your Home Screen for an app-style experience.</p>
+    <ol id="install-steps"></ol>
+    <button class="install-done" id="install-close" type="button">GOT IT</button>
+  </dialog>
+  <header>
+    <div class="logo"><em>J</em>ARVIS</div>
+    <div class="pill" id="pill"><span class="dot"></span><span id="st">Connecting</span></div>
+    <div class="enc-badge" id="enc">AES-256</div>
+    <div class="spacer"></div>
+    <button class="alert-btn" id="alerts-btn" type="button" aria-label="Enable attention alerts" title="Enable attention alerts">♧</button>
+    <button class="install-btn studio-nav" id="student-studio-toggle" type="button" aria-label="Open Student Studio" aria-controls="student-studio-view" aria-expanded="false">STUDIO</button>
+    <button class="install-btn" id="install-btn" type="button" aria-label="Install JARVIS app">INSTALL</button>
+    <div class="url">__IP__:__PORT__</div>
+  </header>
+  <main id="feed">
+    <section class="hero">
+      <div class="reactor"><div class="reactor-core">J</div></div>
+      <div class="hero-kicker">SYSTEM ONLINE // NEURAL LINK</div>
+      <h1>J.A.R.V.I.S. ONLINE.</h1>
+      <p class="hero-copy" id="hero-copy">Your JARVIS is ready when you are.</p>
+      <div class="hero-actions">
+        <button class="hero-btn primary" id="call-btn" type="button">◉ &nbsp; CALL JARVIS</button>
+        <button class="hero-btn" id="wake-control" type="button">◌ &nbsp; WAKE NOW</button>
+      </div>
+    </section>
+    <section class="telemetry" aria-label="Connection status">
+      <div class="telemetry-item">
+        <div class="telemetry-label">DESKTOP LINK</div>
+        <div class="telemetry-value warn" id="desktop-link">CONNECTING</div>
+      </div>
+      <div class="telemetry-item">
+        <div class="telemetry-label">AI ENGINE</div>
+        <div class="telemetry-value warn" id="ai-engine">WAITING</div>
+      </div>
+      <div class="telemetry-item">
+        <div class="telemetry-label">PHONE AUDIO</div>
+        <div class="telemetry-value" id="phone-voice">STANDBY</div>
+      </div>
+    </section>
+    <section class="student-studio" id="student-studio-view" aria-label="Student Studio" hidden>
+      <div class="student-studio-header">
+        <div class="hero-kicker">J.A.R.V.I.S. LEARNING WORKSPACE</div>
+        <h2>Student Studio</h2>
+        <p>Learn a subject, practise it, review your notes, or build a coding project. Pick a workflow below, replace the bracketed details, and JARVIS will work in this conversation.</p>
+        <button class="studio-back" id="student-studio-back" type="button">← &nbsp;BACK TO JARVIS</button>
+      </div>
+      <section class="studio-capabilities" aria-label="Student Studio capabilities">
+        <h3>LEARN, CREATE, AND DEBUG</h3>
+        <p>Study tools include explanations, image-based lessons, Mermaid flowcharts, interactive quizzes, flashcards, practice problems, study plans, revision summaries, analogies, and exam reviews. The coding workspace can use JARVIS’s project builder and code helper for scaffolding, edits, debugging, explanations, and optimization. These are JARVIS features, not bundled ChatGPT, Claude Code, or Cline services.</p>
+      </section>
+      <div class="section-label"><span>LEARNING TOOLS</span><span>LEARN • PRACTISE • REVISE</span></div>
+      <section class="study-grid" aria-label="Student study tools">
+      <button class="study-card quick-action" data-command="Teach me [topic] at a [beginner/high school/university] level. Start with an intuitive explanation, then show a worked example and check my understanding.">
+        <strong>🧠 &nbsp;Learn a topic</strong><span>Step-by-step teaching, examples, and a check for understanding.</span>
+      </button>
+      <button class="study-card quick-action" data-command="Create a Mermaid flowchart for [topic]. Explain each step and keep the diagram valid Mermaid syntax.">
+        <strong>🔀 &nbsp;Build a flowchart</strong><span>Visualize processes, cause and effect, or how concepts connect.</span>
+      </button>
+      <button class="study-card quick-action" data-command="Quiz me on [topic] at a [level] level, one question at a time. Wait for my answer, then explain it and give the next question.">
+        <strong>❓ &nbsp;Quiz me</strong><span>Interactive questions with feedback after each answer.</span>
+      </button>
+      <button class="study-card quick-action" data-command="Make 10 spaced-repetition flashcards for [topic] at a [level] level.">
+        <strong>🗂️ &nbsp;Flashcards</strong><span>Quick recall practice for definitions, facts, and key ideas.</span>
+      </button>
+      <button class="study-card quick-action" data-command="Create a study plan for [topic]. I have [time available or exam date]. Include review sessions and practice.">
+        <strong>🗓️ &nbsp;Study plan</strong><span>Organize a topic into manageable sessions and revision.</span>
+      </button>
+      <button class="study-card quick-action" data-command="Use study_tutor in image_explain mode to teach me from this image file: [local image path]. Explain its labels and make a flowchart if it shows a process.">
+        <strong>🖼️ &nbsp;Learn from an image</strong><span>Explain diagrams, notes, or textbook images from a local image path.</span>
+      </button>
+    </section>
+    <div class="study-note">Tip: replace the [bracketed] details before sending. Image lessons need a local image path; flowcharts are returned as Mermaid diagrams.</div>
+    <div class="section-label"><span>CODING WORKSPACE</span><span>BUILD • EXPLAIN • DEBUG</span></div>
+    <section class="study-grid" aria-label="Student coding tools">
+      <button class="study-card quick-action" data-command="Use dev_agent to build a complete [language] project named [project name] that [describe what it should do]. Plan the files, implement the project, and run it.">
+        <strong>⌘ &nbsp;Build a project</strong><span>Scaffold a multi-file app, implement it, then attempt a run and fix loop.</span>
+      </button>
+      <button class="study-card quick-action" data-command="Explain this code step by step at a [level] level. Point out the inputs, outputs, and important logic: [paste code or provide the local file path].">
+        <strong>📖 &nbsp;Understand code</strong><span>Get a guided walkthrough of a code snippet or local source file.</span>
+      </button>
+      <button class="study-card quick-action" data-command="Use code_helper to debug and fix this [language] code. Explain the root cause and preserve its intended behavior: [paste code or provide the local file path and error].">
+        <strong>🛠️ &nbsp;Debug code</strong><span>Investigate an error and make a focused fix to the code.</span>
+      </button>
+      <button class="study-card quick-action" data-command="Review this code for correctness, readability, and security issues. Explain any important findings before suggesting changes: [paste code or provide the local file path].">
+        <strong>🔍 &nbsp;Review code</strong><span>Ask for a review, explanations, and concrete improvement suggestions.</span>
+      </button>
+      <button class="study-card quick-action" data-command="Create unit tests for this [language] code, covering the normal case, edge cases, and failures: [paste code or provide the local file path].">
+        <strong>🧪 &nbsp;Practise testing</strong><span>Learn test design with meaningful examples and edge cases.</span>
+      </button>
+      <button class="study-card quick-action" data-command="Teach me [programming concept] using a small runnable example in [language]. Then give me a short coding exercise and wait for my attempt.">
+        <strong>💡 &nbsp;Learn to code</strong><span>Understand programming concepts through examples and exercises.</span>
+      </button>
+    </section>
+    <div class="study-note">Project generation may create files, run code, install project dependencies, or open an editor. Review generated code before using it. Provide a local path when asking JARVIS to work with an existing file.</div>
+    </section>
+    <div class="section-label"><span>AGENT CAPABILITIES</span><span>CHATGPT-STYLE DESKTOP CONTROL</span></div>
+    <section class="detail-grid" aria-label="Assistant capabilities overview">
+      <article class="detail-card">
+        <div class="detail-top"><span class="detail-icon">🖥️</span><span class="detail-pill">Desktop</span></div>
+        <div class="detail-title">Computer use</div>
+        <p>Open apps, inspect the screen, move the mouse, click elements, type text, and keep working across the desktop like a real operator.</p>
+      </article>
+      <article class="detail-card">
+        <div class="detail-top"><span class="detail-icon">🌐</span><span class="detail-pill">Web</span></div>
+        <div class="detail-title">Browser control</div>
+        <p>Search, browse, navigate sites, fill forms, submit tasks, and work with tabs or pages without leaving the AI workflow.</p>
+      </article>
+      <article class="detail-card">
+        <div class="detail-top"><span class="detail-icon">📸</span><span class="detail-pill">Vision</span></div>
+        <div class="detail-title">Screen understanding</div>
+        <p>Capture screenshots, inspect the current view, identify UI problems, and explain what needs to be fixed on the visible screen.</p>
+      </article>
+      <article class="detail-card">
+        <div class="detail-top"><span class="detail-icon">🧠</span><span class="detail-pill">Autonomy</span></div>
+        <div class="detail-title">Agent workflow</div>
+        <p>Use multimodal actions to manage files, analyze information, summarize content, and complete everyday computer tasks end-to-end.</p>
+      </article>
+    </section>
+    <div class="section-label"><span>COMMAND DECK</span><span>YOUR DESKTOP, AT A TOUCH</span></div>
+    <section class="control-grid" aria-label="Assistant controls">
+      <button class="control-card" data-control="wake"><span class="control-icon">◉</span><span class="control-name">Wake assistant</span></button>
+      <button class="control-card" data-control="interrupt"><span class="control-icon">⏹</span><span class="control-name">Interrupt speech</span></button>
+      <button class="control-card" data-command="Give me a quick system status update, including CPU, memory, and battery if available."><span class="control-icon">◈</span><span class="control-name">System status</span></button>
+      <button class="control-card" data-command="Look at my computer screen and summarize what is open."><span class="control-icon">▣</span><span class="control-name">View my screen</span></button>
+      <button class="control-card" data-command="What's the weather today?"><span class="control-icon">☼</span><span class="control-name">Weather</span></button>
+      <button class="control-card" data-command="Create a clean landing page for a modern startup brand with a hero section and pricing cards."><span class="control-icon">▣</span><span class="control-name">Landing page</span></button>
+      <button class="control-card" data-command="Build a responsive dashboard UI with charts, sidebar, cards, and a dark theme."><span class="control-icon">◫</span><span class="control-name">Dashboard UI</span></button>
+      <button class="control-card" data-command="Design a login screen with a glassmorphism effect and social sign-in buttons."><span class="control-icon">◌</span><span class="control-name">Login screen</span></button>
+      <button class="control-card" data-command="Generate a modern mobile app home screen with cards, search, and CTA buttons."><span class="control-icon">◍</span><span class="control-name">Mobile UI</span></button>
+      <button class="control-card" data-command="Create a portfolio website homepage with hero text, project cards, and contact section."><span class="control-icon">⌂</span><span class="control-name">Portfolio page</span></button>
+      <button class="control-card" data-command="Search the web for the latest important news."><span class="control-icon">⌕</span><span class="control-name">Web briefing</span></button>
+      <button class="control-card" data-command="Open my browser."><span class="control-icon">◫</span><span class="control-name">Open browser</span></button>
+      <button class="control-card" data-command="What did you last change that I can undo?"><span class="control-icon">↶</span><span class="control-name">Undo a change</span></button>
+      <button class="control-card" data-command="What reminders do I have?"><span class="control-icon">◷</span><span class="control-name">Reminders</span></button>
+      <button class="control-card" data-command="Turn my computer volume down a little."><span class="control-icon">◖</span><span class="control-name">Volume down</span></button>
+      <button class="control-card" data-command="Turn my computer volume up a little."><span class="control-icon">◗</span><span class="control-name">Volume up</span></button>
+      <button class="control-card" data-command="Set my screen brightness to 60 percent."><span class="control-icon">☀</span><span class="control-name">Brightness</span></button>
+      <button class="control-card" data-command="Open a text editor on my computer."><span class="control-icon">▤</span><span class="control-name">Open an app</span></button>
+      <button class="control-card" data-control="sleep" id="sleep-control"><span class="control-icon">◐</span><span class="control-name">Sleep assistant</span></button>
+      <button class="control-card" id="notify-control"><span class="control-icon">♧</span><span class="control-name">Phone alerts</span></button>
+      <button class="control-card" data-command="What can you help me control on this computer?"><span class="control-icon">✧</span><span class="control-name">All capabilities</span></button>
+    </section>
+    <div class="section-label"><span>QUICK PROMPTS</span><span>OR TYPE BELOW</span></div>
+    <section class="quick-actions" id="welcome">
+      <button class="quick-action" data-command="What can you help me with?">✦ &nbsp;What can you help me with?</button>
+      <button class="quick-action" data-command="Give me a quick system status update.">◈ &nbsp;Check my computer status</button>
+      <button class="quick-action" data-command="Use my computer to open the browser and look up the latest AI news.">◉ &nbsp;Use computer for web task</button>
+      <button class="quick-action" data-command="Inspect my screen and summarize what is open on the desktop.">▣ &nbsp;Inspect my screen</button>
+      <button class="quick-action" data-command="Take a screenshot of the current screen and tell me what I need to fix.">◌ &nbsp;Screenshot + analyze</button>
+      <button class="quick-action" data-command="Build me a dark dashboard UI with charts and widgets.">◫ &nbsp;Create a dashboard UI</button>
+      <button class="quick-action" data-command="Design a responsive landing page for a SaaS product.">▣ &nbsp;Create a landing page</button>
+      <button class="quick-action" data-command="What's the weather today?">☼ &nbsp;What's the weather today?</button>
+    </section>
+    <div class="feed-label">LIVE ACTIVITY</div>
+    <section id="messages" aria-live="polite" style="display:contents"></section>
+  </main>
+  <footer>
+    <input id="inp" placeholder="Enter command for JARVIS…" autocomplete="off">
+    <label class="btn-attach" for="file-inp" title="Send file">📎</label>
+    <input type="file" id="file-inp" multiple accept="*/*" style="display:none">
+    <button id="mic-btn" onclick="doMic()" title="Voice command">🎤</button>
+    <button class="btn btn-wake" id="wake" onclick="doWake()">WAKE</button>
+    <button class="btn btn-send" onclick="doSend()">SEND</button>
+  </footer>
+
+  <script>
+    // ── Auth — bearer token ───────────────────────────────────────────────────
+    const _authToken  = sessionStorage.getItem('jarvis_token');
+    const _sessionKey = sessionStorage.getItem('jarvis_key');
+
+    if (!_authToken) {
+      location.replace('/login');
+    }
+
+    function _authHeader() { return { 'Authorization': `Bearer ${_authToken}` }; }
+    function _authFetch(url, opts = {}) {
+      opts.headers = Object.assign({}, opts.headers, _authHeader());
+      return fetch(url, opts);
+    }
+
+    // ── AES-256-CBC encryption (CryptoJS) ────────────────────────────────────
+    const _AES_SALT = 'JARVIS-DASHBOARD-v1';
+    let _aesKey = null;
+
+    function _initCrypto(key) {
+      if (typeof CryptoJS === 'undefined') return false;
+      _aesKey = CryptoJS.SHA256(key + _AES_SALT);
+      return true;
+    }
+
+    function _encrypt(plaintext) {
+      if (!_aesKey || typeof CryptoJS === 'undefined') return null;
+      try {
+        const iv  = CryptoJS.lib.WordArray.random(16);
+        const enc = CryptoJS.AES.encrypt(
+          CryptoJS.enc.Utf8.parse(plaintext), _aesKey,
+          { iv, mode: CryptoJS.mode.CBC, padding: CryptoJS.pad.Pkcs7 }
+        );
+        const ivHex = iv.toString(CryptoJS.enc.Hex);
+        const ctHex = enc.ciphertext.toString(CryptoJS.enc.Hex);
+        const hex   = ivHex + ctHex;
+        const bytes = new Uint8Array(hex.length / 2);
+        for (let i = 0; i < bytes.length; i++)
+          bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+        return btoa(String.fromCharCode(...bytes));
+      } catch { return null; }
+    }
+
+    const _encReady = _sessionKey ? _initCrypto(_sessionKey) : false;
+    const encBadge  = document.getElementById('enc');
+    if (_encReady) { encBadge.className = 'enc-badge on'; }
+    else           { encBadge.className = 'enc-badge off'; encBadge.textContent = 'NO ENC'; }
+
+    // ── WebSocket ─────────────────────────────────────────────────────────────
+    const feed  = document.getElementById('feed');
+    const messages = document.getElementById('messages');
+    if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+    feed.scrollTop = 0;
+    window.addEventListener('pageshow', () => {
+      requestAnimationFrame(() => requestAnimationFrame(() => { feed.scrollTop = 0; }));
+    }, { once: true });
+    const pill  = document.getElementById('pill');
+    const stTxt = document.getElementById('st');
+    const wake  = document.getElementById('wake');
+    const bootScreen = document.getElementById('boot-screen');
+    const attentionOverlay = document.getElementById('attention');
+    const modalBackground = [...document.querySelectorAll('header, #feed, footer')];
+    let pendingAttention = null;
+    let activeCallRequest = null;
+    let deferredAttentions = [];
+    let callConnecting = false;
+    let phoneCallUiActive = false;
+    let attentionReturnFocus = null;
+    let callAttemptId = 0;
+    let callVibrationTimer = null;
+    let activeCallStartedAt = 0;
+    let activeCallTimer = null;
+    let bootTimeout = setTimeout(() => bootScreen.classList.add('hidden'), 8000);
+
+    const _wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const _wsUrl   = `${_wsProto}://${location.host}/ws?token=${encodeURIComponent(_authToken)}`;
+    const ws       = new WebSocket(_wsUrl);
+
+    ws.onopen    = () => {
+      clearTimeout(bootTimeout);
+      bootScreen.classList.add('hidden');
+      sys('Secure remote session active.', false);
+      toast('Connected to JARVIS');
+      updateRemoteStatus();
+    };
+    ws.onclose   = () => {
+      pill.className = 'pill';
+      stTxt.textContent = 'Offline';
+      document.getElementById('hero-copy').textContent = 'Connection lost. Reopen this dashboard to reconnect.';
+      setTelemetry('desktop-link', 'OFFLINE', false);
+      sys('Connection lost — reopen the dashboard to reconnect.');
+    };
+    ws.onerror   = () => sys('Connection error.');
+    ws.onmessage = (e) => {
+      const m = JSON.parse(e.data);
+      if (m.type === 'log') {
+        if (phoneCallUiActive) {
+          if (m.speaker === 'jarvis')
+            document.getElementById('call-status').textContent = 'JARVIS IS SPEAKING';
+        } else {
+          append(m.speaker, m.text);
+        }
+      }
+      if (m.type === 'status') {
+        setStatus(m.state);
+        if (_twoWayActive) {
+          document.getElementById('call-status').textContent =
+            m.state === 'SPEAKING' ? 'JARVIS IS SPEAKING' : 'LIVE • YOU CAN SPEAK';
+        }
+      }
+      if (m.type === 'wake')          sys('Wake word detected — connecting…');
+      if (m.type === 'sys')           sys(m.text);
+      if (m.type === 'file_received') _onFileReceived(m);
+      if (m.type === 'attention' || m.type === 'call') showAttention(m);
+    };
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', event => {
+        if (event.data?.type === 'attention-open' && event.data.attention) {
+          showAttention(event.data.attention);
+        }
+      });
+    }
+
+    function setStatus(s) {
+      if (s === 'active' || s === 'listening') {
+        pill.className = 'pill on'; stTxt.textContent = s === 'listening' ? 'Listening' : 'Active'; wake.classList.remove('show');
+        document.getElementById('hero-copy').textContent = 'Securely connected • ready for your command.';
+      } else {
+        pill.className = 'pill'; stTxt.textContent = s === 'offline' ? 'Offline' : 'Sleeping'; wake.classList.add('show');
+        document.getElementById('hero-copy').textContent = 'JARVIS is asleep. Wake the assistant to continue.';
+      }
+    }
+
+    function setTelemetry(id, value, active) {
+      const element = document.getElementById(id);
+      element.textContent = value;
+      element.classList.toggle('good', active);
+      element.classList.toggle('warn', !active);
+    }
+
+    function _feedNearBottom() {
+      return feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 80;
+    }
+
+    function append(speaker, text) {
+      const follow = _feedNearBottom();
+      const d = document.createElement('div');
+      if (speaker === 'jarvis') {
+        d.className = 'msg msg-j';
+        d.innerHTML = `<div class="lbl">Jarvis</div>${esc(text)}`;
+      } else {
+        d.className = 'msg msg-u';
+        d.innerHTML = `<div class="lbl">You</div>${esc(text)}`;
+      }
+      messages.appendChild(d);
+      if (follow) feed.scrollTop = feed.scrollHeight;
+    }
+
+    function sys(text, follow = _feedNearBottom()) {
+      const d = document.createElement('div');
+      d.className = 'msg msg-sys'; d.textContent = text;
+      messages.appendChild(d);
+      if (follow) feed.scrollTop = feed.scrollHeight;
+    }
+
+    function esc(s) {
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    // ── File helpers ──────────────────────────────────────────────────────────
+    function _fileIcon(name) {
+      const ext = (name.split('.').pop() || '').toLowerCase();
+      if (['jpg','jpeg','png','gif','webp','heic','heif','avif','bmp','svg'].includes(ext)) return '🖼️';
+      if (['mp4','mov','avi','mkv','webm','m4v','3gp'].includes(ext))                       return '🎬';
+      if (['mp3','m4a','wav','flac','aac','ogg','opus'].includes(ext))                      return '🎵';
+      if (['pdf'].includes(ext))                                                             return '📋';
+      if (['doc','docx','txt','md','rtf','odt'].includes(ext))                              return '📝';
+      if (['xls','xlsx','csv','ods'].includes(ext))                                         return '📊';
+      if (['ppt','pptx','odp'].includes(ext))                                               return '📑';
+      if (['zip','rar','7z','tar','gz','bz2','xz'].includes(ext))                          return '📦';
+      if (['apk','exe','dmg','deb','rpm','msi'].includes(ext))                              return '⚙️';
+      return '📎';
+    }
+
+    function _fmtSize(bytes) {
+      if (bytes < 1024)             return bytes + ' B';
+      if (bytes < 1024 * 1024)     return (bytes / 1024).toFixed(1) + ' KB';
+      if (bytes < 1024 ** 3)       return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+      return (bytes / 1024 ** 3).toFixed(2) + ' GB';
+    }
+
+    // ── File upload (phone → computer) ────────────────────────────────────────
+    function _uploadFile(file) {
+      const id = 'fc_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+
+      // Create file card in feed
+      const card = document.createElement('div');
+      card.className = 'msg-file';
+      card.id = id;
+      card.innerHTML = `
+        <div class="fc-icon">${_fileIcon(file.name)}</div>
+        <div class="fc-meta">
+          <div class="fc-lbl">Sending</div>
+          <div class="fc-name">${esc(file.name)}</div>
+          <div class="fc-size">${_fmtSize(file.size)}</div>
+          <div class="fc-bar-wrap"><div class="fc-bar" id="${id}_bar"></div></div>
+        </div>
+        <div class="fc-status" id="${id}_st">0%</div>
+      `;
+      messages.appendChild(card);
+      feed.scrollTop = feed.scrollHeight;
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/upload');
+      xhr.setRequestHeader('Authorization', `Bearer ${_authToken}`);
+
+      xhr.upload.onprogress = (e) => {
+        if (!e.lengthComputable) return;
+        const pct = Math.round(e.loaded / e.total * 100);
+        const bar = document.getElementById(`${id}_bar`);
+        const st  = document.getElementById(`${id}_st`);
+        if (bar) bar.style.width = pct + '%';
+        if (st)  st.textContent  = pct + '%';
+      };
+
+      xhr.onload = () => {
+        const bar  = document.getElementById(`${id}_bar`);
+        const st   = document.getElementById(`${id}_st`);
+        const meta = card.querySelector('.fc-meta');
+        const lbl  = card.querySelector('.fc-lbl');
+        if (xhr.status === 200) {
+          let savedName = file.name;
+          try { savedName = JSON.parse(xhr.responseText).name || file.name; } catch {}
+          const dlUrl = `/uploads/${encodeURIComponent(savedName)}?token=${encodeURIComponent(_authToken)}`;
+          if (bar)  { bar.style.width = '100%'; bar.style.background = 'var(--green)'; }
+          if (st)   { st.textContent = '✓'; st.className = 'fc-status done'; }
+          if (lbl)  lbl.textContent = 'Sent';
+          if (meta) meta.insertAdjacentHTML('beforeend',
+            `<a class="fc-dl" href="${dlUrl}" download="${esc(savedName)}">⬇ Download back</a>`);
+          toast('File sent!');
+        } else {
+          let errMsg = 'Upload failed';
+          try { errMsg = JSON.parse(xhr.responseText).error || errMsg; } catch {}
+          if (bar) bar.style.background = '#f87171';
+          if (st)  { st.textContent = 'ERR'; st.className = 'fc-status err'; }
+          if (lbl) lbl.textContent = errMsg;
+        }
+      };
+
+      xhr.onerror = () => {
+        const st  = document.getElementById(`${id}_st`);
+        const lbl = card.querySelector('.fc-lbl');
+        if (st)  { st.textContent = 'ERR'; st.className = 'fc-status err'; }
+        if (lbl) lbl.textContent = 'Connection error';
+      };
+
+      const fd = new FormData();
+      fd.append('file', file);
+      xhr.send(fd);
+    }
+
+    // File received by another WebSocket client (e.g., second open tab)
+    function _onFileReceived(m) {
+      const dlUrl = `/uploads/${encodeURIComponent(m.name)}?token=${encodeURIComponent(_authToken)}`;
+      const card  = document.createElement('div');
+      card.className = 'msg-file';
+      card.innerHTML = `
+        <div class="fc-icon">${_fileIcon(m.name)}</div>
+        <div class="fc-meta">
+          <div class="fc-lbl">Received</div>
+          <div class="fc-name">${esc(m.name)}</div>
+          <div class="fc-size">${_fmtSize(m.size)}</div>
+          <a class="fc-dl" href="${dlUrl}" download="${esc(m.name)}">⬇ Download</a>
+        </div>
+        <div class="fc-status done">✓</div>
+      `;
+      messages.appendChild(card);
+      if (_feedNearBottom()) feed.scrollTop = feed.scrollHeight;
+      toast('File received on computer!');
+    }
+
+    // File input change handler
+    document.getElementById('file-inp').addEventListener('change', function () {
+      Array.from(this.files).forEach(_uploadFile);
+      this.value = ''; // reset so the same file can be re-sent
+    });
+
+    // ── Commands ──────────────────────────────────────────────────────────────
+    function doSend() {
+      const inp = document.getElementById('inp');
+      const txt = inp.value.trim();
+      if (!txt) return;
+      inp.value = '';
+      append('user', txt);
+      feed.scrollTop = feed.scrollHeight;
+      sendCommand(txt);
+    }
+
+    async function sendCommand(txt) {
+      const enc  = _encrypt(txt);
+      const body = enc ? { enc } : { text: txt };
+      try {
+        const response = await _authFetch('/api/command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+        });
+        if (!response.ok) {
+          const result = await response.json().catch(() => ({}));
+          sys(result.error || 'Command could not be sent.');
+        }
+      } catch (error) {
+        sys(`Command failed: ${error.message}`);
+      }
+    }
+
+    function doWake() {
+      sys('Sending wake signal…');
+      _authFetch('/api/wake', { method: 'POST' }).then(response => {
+        if (!response.ok) sys('Wake request failed.');
+      }).catch(error => sys(`Wake request failed: ${error.message}`));
+    }
+
+    document.getElementById('inp').addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); }
+    });
+    document.querySelectorAll('.quick-action').forEach(button => {
+      button.addEventListener('click', () => {
+        document.getElementById('inp').value = button.dataset.command;
+        doSend();
+      });
+    });
+    const studentStudio = document.getElementById('student-studio-view');
+    const studentStudioToggle = document.getElementById('student-studio-toggle');
+    function setStudentStudioOpen(open) {
+      studentStudio.hidden = !open;
+      document.body.classList.toggle('student-mode', open);
+      studentStudioToggle.setAttribute('aria-expanded', String(open));
+      studentStudioToggle.setAttribute('aria-label', open ? 'Return to JARVIS dashboard' : 'Open Student Studio');
+      studentStudioToggle.textContent = open ? 'JARVIS' : 'STUDIO';
+      document.getElementById('inp').placeholder = open
+        ? 'Ask a study or coding question…'
+        : 'Enter command for JARVIS…';
+      feed.scrollTop = 0;
+    }
+    studentStudioToggle.addEventListener('click', () => {
+      setStudentStudioOpen(studentStudio.hidden);
+    });
+    document.getElementById('student-studio-back').addEventListener('click', () => {
+      setStudentStudioOpen(false);
+    });
+    document.querySelectorAll('.control-card[data-command]').forEach(button => {
+      button.addEventListener('click', () => {
+        append('user', button.dataset.command);
+        feed.scrollTop = feed.scrollHeight;
+        sendCommand(button.dataset.command);
+      });
+    });
+
+    async function updateRemoteStatus() {
+      try {
+        const response = await _authFetch('/api/status');
+        if (!response.ok) throw new Error('Status unavailable');
+        const status = await response.json();
+        const socketState = ws.readyState === WebSocket.OPEN ? 'LINKED' :
+          (ws.readyState === WebSocket.CONNECTING ? 'CONNECTING' : 'OFFLINE');
+        setTelemetry('desktop-link', socketState, socketState === 'LINKED');
+        setTelemetry('ai-engine', status.connected ? (status.awake ? 'ACTIVE' : 'SLEEP') : 'WAITING',
+          Boolean(status.connected && status.awake));
+        setTelemetry('phone-voice', status.phone_voice_active ? 'ACTIVE' : 'IDLE',
+          Boolean(status.phone_voice_active));
+        if (status.connected) setStatus(status.awake ? 'active' : 'sleeping');
+        document.getElementById('sleep-control').hidden = !status.wake_word_enabled;
+        document.getElementById('wake-control').textContent =
+          status.awake ? '◌  ASSISTANT AWAKE' : '◌  WAKE NOW';
+      } catch (error) {
+        console.warn('JARVIS status could not be loaded:', error);
+      }
+    }
+
+    async function doControl(action) {
+      try {
+        const response = await _authFetch('/api/control', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || 'Control request failed.');
+        if (action === 'sleep') _stopVoice();
+        if (action === 'interrupt') toast('JARVIS interrupted');
+        else toast(action === 'wake' ? 'JARVIS is awake' : 'JARVIS is sleeping');
+        await updateRemoteStatus();
+      } catch (error) {
+        sys(error.message);
+      }
+    }
+
+    document.querySelectorAll('[data-control]').forEach(button => {
+      button.addEventListener('click', () => doControl(button.dataset.control));
+    });
+    document.getElementById('wake-control').addEventListener('click', () => doControl('wake'));
+    document.getElementById('call-btn').addEventListener('click', startCall);
+    document.getElementById('attention-answer').addEventListener('click', answerAttention);
+    document.getElementById('attention-dismiss').addEventListener('click', dismissAttention);
+
+    async function enableAlerts() {
+      if (!('Notification' in window) || !('serviceWorker' in navigator)) {
+        toast('This browser does not support phone alerts');
+        return;
+      }
+      try {
+        const permission = Notification.permission === 'default'
+          ? await Notification.requestPermission()
+          : Notification.permission;
+        const button = document.getElementById('alerts-btn');
+        button.classList.toggle('enabled', permission === 'granted');
+        button.title = permission === 'granted' ? 'Phone alerts enabled' : 'Enable attention alerts';
+        toast(permission === 'granted' ? 'Attention alerts enabled' : 'Notification permission not granted');
+      } catch (error) {
+        sys(`Could not enable notifications: ${error.message}`);
+      }
+    }
+    document.getElementById('alerts-btn').addEventListener('click', enableAlerts);
+    document.getElementById('notify-control').addEventListener('click', enableAlerts);
+    if ('Notification' in window && Notification.permission === 'granted') {
+      document.getElementById('alerts-btn').classList.add('enabled');
+    }
+
+    async function showAttention(message) {
+      if (phoneCallUiActive) {
+        const isDuplicate = item =>
+          (item.ts && message.ts && item.ts === message.ts) ||
+          (!item.ts && !message.ts && item.type === message.type &&
+            item.title === message.title && item.text === message.text);
+        const duplicate = (activeCallRequest && isDuplicate(activeCallRequest)) ||
+          deferredAttentions.some(isDuplicate);
+        if (!duplicate && deferredAttentions.length < 5) deferredAttentions.push(message);
+        return;
+      }
+      pendingAttention = message;
+      const isCall = message.type === 'call';
+      const card = document.getElementById('attention-card');
+      card.classList.toggle('calling', isCall);
+      attentionOverlay.setAttribute('role', 'alertdialog');
+      attentionOverlay.setAttribute('aria-label',
+        message.title || (isCall ? 'JARVIS is calling' : 'JARVIS needs your attention'));
+      document.getElementById('attention-kicker').textContent =
+        isCall ? 'INCOMING JARVIS CALL' : 'INCOMING ATTENTION';
+      document.getElementById('attention-title').textContent =
+        message.title || (isCall ? 'JARVIS is calling' : 'JARVIS needs you');
+      document.getElementById('attention-text').textContent = message.text || 'Your assistant is requesting your attention.';
+      document.getElementById('attention-answer').textContent =
+        isCall ? 'ANSWER CALL' : 'ANSWER';
+      document.getElementById('attention-dismiss').textContent =
+        isCall ? 'DECLINE' : 'NOT NOW';
+      document.getElementById('attention-answer').disabled = false;
+      _setAttentionVisible(true, 'attention-answer');
+      navigator.vibrate?.([220, 100, 220]);
+      if (callVibrationTimer) clearInterval(callVibrationTimer);
+      callVibrationTimer = null;
+      if (isCall && !document.hidden && navigator.vibrate) {
+        callVibrationTimer = setInterval(() => navigator.vibrate([220, 100, 220]), 1600);
+      }
+      if (document.hidden && 'Notification' in window &&
+          Notification.permission === 'granted' && 'serviceWorker' in navigator) {
+        try {
+          const registration = await navigator.serviceWorker.ready;
+          await registration.showNotification(message.title || 'JARVIS needs you', {
+            body: message.text || 'Your assistant is requesting your attention.',
+            icon: '/static/icon-192.png',
+            tag: 'jarvis-attention',
+            renotify: true,
+            data: {
+              url: location.href,
+              title: message.title || 'JARVIS needs you',
+              text: message.text || 'Your assistant is requesting your attention.',
+              type: message.type || 'attention',
+              ts: message.ts
+            }
+          });
+        } catch (error) {
+          console.warn('Phone attention notification could not be displayed:', error);
+        }
+      }
+    }
+
+    async function answerAttention() {
+      if (callConnecting || _twoWayActive) return;
+      const request = pendingAttention;
+      const isCall = request?.type === 'call';
+      const attemptId = ++callAttemptId;
+      callConnecting = true;
+      phoneCallUiActive = true;
+      document.getElementById('attention-answer').disabled = true;
+      activeCallRequest = request;
+      _clearAttentionPrompt();
+      document.getElementById('incoming-call').hidden = true;
+      document.getElementById('call-active').hidden = false;
+      attentionOverlay.setAttribute('role', 'dialog');
+      attentionOverlay.setAttribute('aria-label', isCall ? 'JARVIS phone call' : 'JARVIS attention session');
+      document.getElementById('call-retry').hidden = true;
+      document.getElementById('call-mute').disabled = true;
+      _setAttentionVisible(true, 'call-end');
+      document.getElementById('call-status').textContent = 'CONNECTING MICROPHONE';
+
+      const connected = await doMic(true);
+      if (attemptId !== callAttemptId) {
+        if (connected) _stopVoice();
+        return;
+      }
+      if (!connected) {
+        callConnecting = false;
+        document.getElementById('call-status').textContent = 'CHECK MICROPHONE PERMISSION';
+        document.getElementById('call-retry').hidden = false;
+        return;
+      }
+
+      if (isCall) {
+        const reason = request.text || 'You called to talk with me.';
+        _startCallTimer();
+        await sendCommand(
+          'The user answered your phone call. Briefly give them the relevant update: ' +
+          reason + ' Then have a natural, concise, two-way conversation.'
+        );
+      } else {
+        _startCallTimer();
+        await sendCommand('The user answered your attention request. Briefly explain what needs their attention, then listen.');
+        document.getElementById('call-status').textContent = 'LIVE • YOU CAN SPEAK';
+      }
+      callConnecting = false;
+      document.getElementById('call-mute').disabled = false;
+      toast('Two-way voice connected');
+    }
+
+    function dismissAttention() {
+      phoneCallUiActive = false;
+      _setAttentionVisible(false);
+      _clearAttentionPrompt();
+      document.getElementById('incoming-call').hidden = false;
+      document.getElementById('call-active').hidden = true;
+      document.getElementById('call-active').classList.remove('connected');
+      attentionOverlay.setAttribute('role', 'alertdialog');
+      attentionOverlay.setAttribute('aria-label', 'JARVIS needs your attention');
+      if (activeCallTimer) clearInterval(activeCallTimer);
+      activeCallTimer = null;
+      activeCallStartedAt = 0;
+      callAttemptId++;
+      callConnecting = false;
+      document.getElementById('call-duration').textContent = '00:00';
+      document.getElementById('call-status').textContent = 'CONNECTING AUDIO';
+      document.getElementById('call-mute').setAttribute('aria-pressed', 'false');
+      document.getElementById('call-mute').disabled = false;
+      document.getElementById('call-mute').innerHTML = '<span class="call-control-icon">🎙</span>MUTE';
+      document.getElementById('call-retry').hidden = true;
+      activeCallRequest = null;
+      const nextAttention = deferredAttentions.shift();
+      if (nextAttention) setTimeout(() => showAttention(nextAttention), 0);
+    }
+
+    function _setAttentionVisible(visible, focusId) {
+      if (visible && attentionOverlay.hidden) {
+        attentionReturnFocus = document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      }
+      attentionOverlay.hidden = !visible;
+      modalBackground.forEach(element => { element.inert = visible; });
+      if (visible && focusId) {
+        document.getElementById(focusId).focus({ preventScroll: true });
+      } else if (!visible) {
+        const returnFocus = attentionReturnFocus;
+        attentionReturnFocus = null;
+        if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
+      }
+    }
+
+    attentionOverlay.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && !phoneCallUiActive) {
+        event.preventDefault();
+        dismissAttention();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = [...attentionOverlay.querySelectorAll('button:not([disabled]), select:not([disabled])')]
+        .filter(element => !element.closest('[hidden]'));
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && (document.activeElement === first ||
+          !attentionOverlay.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last ||
+          !attentionOverlay.contains(document.activeElement))) {
+        event.preventDefault();
+        first.focus();
+      }
+    });
+
+    function _clearAttentionPrompt() {
+      if (callVibrationTimer) clearInterval(callVibrationTimer);
+      callVibrationTimer = null;
+      navigator.vibrate?.(0);
+      const isCall = pendingAttention?.type === 'call';
+      document.getElementById('attention-card').classList.remove('calling');
+      if (!isCall) document.getElementById('attention-kicker').textContent = 'INCOMING ATTENTION';
+      document.getElementById('attention-answer').textContent = 'ANSWER';
+      document.getElementById('attention-dismiss').textContent = 'NOT NOW';
+      pendingAttention = null;
+      navigator.serviceWorker?.getRegistration().then(registration => {
+        registration?.getNotifications({ tag: 'jarvis-attention' })
+          .then(notifications => notifications.forEach(notification => notification.close()));
+      }).catch(error => console.warn('Could not clear the attention notification:', error));
+    }
+
+    function _startCallTimer() {
+      activeCallStartedAt = Date.now();
+      document.getElementById('call-active').classList.add('connected');
+      document.getElementById('call-status').textContent = 'LIVE • YOU CAN SPEAK';
+      if (activeCallTimer) clearInterval(activeCallTimer);
+      activeCallTimer = setInterval(() => {
+        const seconds = Math.floor((Date.now() - activeCallStartedAt) / 1000);
+        document.getElementById('call-duration').textContent =
+          `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+      }, 1000);
+    }
+
+    function _endCall() {
+      if (_voiceWs || _phoneOutputWs) _stopVoice();
+      dismissAttention();
+      toast('Call ended');
+    }
+
+    document.getElementById('call-end').addEventListener('click', _endCall);
+    document.getElementById('call-retry').addEventListener('click', async () => {
+      if (activeCallRequest) pendingAttention = activeCallRequest;
+      await answerAttention();
+    });
+    document.getElementById('call-mute').addEventListener('click', () => {
+      if (!_micStm) return;
+      const track = _micStm.getAudioTracks()[0];
+      if (!track) return;
+      track.enabled = !track.enabled;
+      const button = document.getElementById('call-mute');
+      button.setAttribute('aria-pressed', String(!track.enabled));
+      button.innerHTML = track.enabled
+        ? '<span class="call-control-icon">🎙</span>MUTE'
+        : '<span class="call-control-icon">🔇</span>MIC OFF';
+      document.getElementById('call-status').textContent =
+        track.enabled ? 'LIVE • YOU CAN SPEAK' : 'MICROPHONE MUTED';
+    });
+
+    document.getElementById('call-output').addEventListener('change', async event => {
+      if (!_audioCtx || typeof _audioCtx.setSinkId !== 'function') {
+        toast('Audio routing is controlled by your phone');
+        return;
+      }
+      try {
+        await _audioCtx.setSinkId(event.target.value);
+      } catch (error) {
+        sys(`Could not change call audio output: ${error.message}`);
+      }
+    });
+
+    async function startCall() {
+      if (_voiceWs && _twoWayActive) {
+        _endCall();
+        return;
+      }
+      if (callConnecting) return;
+      const attemptId = ++callAttemptId;
+      callConnecting = true;
+      activeCallRequest = {
+        type: 'call',
+        title: 'JARVIS voice call',
+        text: 'You started a voice call. Greet me briefly, then talk naturally.',
+      };
+      phoneCallUiActive = true;
+      document.getElementById('incoming-call').hidden = true;
+      document.getElementById('call-active').hidden = false;
+      attentionOverlay.setAttribute('role', 'dialog');
+      attentionOverlay.setAttribute('aria-label', 'JARVIS phone call');
+      document.getElementById('call-retry').hidden = true;
+      document.getElementById('call-mute').disabled = true;
+      document.getElementById('call-status').textContent = 'CONNECTING MICROPHONE';
+      _setAttentionVisible(true, 'call-end');
+      const connected = await doMic(true);
+      if (attemptId !== callAttemptId) {
+        if (connected) _stopVoice();
+        return;
+      }
+      if (!connected) {
+        callConnecting = false;
+        document.getElementById('call-status').textContent = 'CHECK MICROPHONE PERMISSION';
+        document.getElementById('call-retry').hidden = false;
+        return;
+      }
+      callConnecting = false;
+      _startCallTimer();
+      await sendCommand(
+        'The user started a two-way phone call. Greet them briefly and then have a natural conversation.'
+      );
+      document.getElementById('call-mute').disabled = false;
+    }
+
+    // ── Toast ─────────────────────────────────────────────────────────────────
+    let _toastTimer;
+    function toast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg; t.classList.add('show');
+      clearTimeout(_toastTimer);
+      _toastTimer = setTimeout(() => t.classList.remove('show'), 2800);
+    }
+
+    // ── Real-time Voice — PCM16 WebSocket → Gemini Live ──────────────────────
+    const micBtn  = document.getElementById('mic-btn');
+    let _voiceWs  = null;
+    let _phoneOutputWs = null;
+    let _phoneOutputPing = null;
+    let _phoneAudioCursor = 0;
+    let _twoWayActive = false;
+    let _audioCtx = null;
+    let _micStm   = null;
+    let _audioNd  = null;
+    let _audioSink = null;
+
+    function _micIdle() {
+      micBtn.innerHTML = '🎤';
+      micBtn.title     = 'Voice — tap to speak';
+      micBtn.classList.remove('recording');
+      _twoWayActive = false;
+      document.getElementById('call-btn').textContent = '◉  CALL JARVIS';
+      if (activeCallStartedAt) {
+        document.getElementById('call-status').textContent = 'CALL AUDIO DISCONNECTED';
+        clearInterval(activeCallTimer);
+        activeCallTimer = null;
+        activeCallStartedAt = 0;
+        document.getElementById('call-mute').disabled = true;
+        document.getElementById('call-retry').hidden = false;
+      }
+      document.getElementById('call-active').classList.remove('connected');
+    }
+
+    // Float32 PCM → resample to 16 kHz + convert to Int16
+    function _f32toPcm16(f32, srcRate) {
+      let s = f32;
+      if (srcRate !== 16000) {
+        const ratio = srcRate / 16000;
+        const len   = Math.round(f32.length / ratio);
+        s = new Float32Array(len);
+        for (let i = 0; i < len; i++)
+          s[i] = f32[Math.min(Math.round(i * ratio), f32.length - 1)];
+      }
+      const out = new Int16Array(s.length);
+      for (let i = 0; i < s.length; i++)
+        out[i] = Math.max(-32768, Math.min(32767, Math.round(s[i] * 32768)));
+      return out.buffer;
+    }
+
+    function _showVoiceSetup() {
+      if (document.getElementById('voice-setup')) return; // show once
+      const origin = location.origin;
+      const card = document.createElement('div');
+      card.id = 'voice-setup';
+      card.style.cssText = [
+        'align-self:stretch', 'background:rgba(22,133,176,0.12)',
+        'border:1px solid rgba(83,229,255,0.22)', 'border-radius:14px',
+        'padding:16px 18px', 'font-size:13px', 'line-height:1.8',
+        'animation:pop 0.18s ease'
+      ].join(';');
+      card.innerHTML =
+        '<div style="font-weight:700;color:#53e5ff;letter-spacing:.5px;margin-bottom:10px">🎤 One-time voice setup</div>' +
+        '<ol style="padding-left:18px;color:#8899aa;margin:0;display:flex;flex-direction:column;gap:4px">' +
+        '<li>Open a new tab → go to <span style="background:rgba(255,255,255,0.07);padding:1px 6px;border-radius:4px;font-family:monospace;font-size:12px">chrome://flags</span></li>' +
+        '<li>Search: <strong style="color:#d9f7ff">Insecure origins treated as secure</strong></li>' +
+        '<li>Paste this URL into the box:<br><span id="flags-url" style="background:rgba(255,255,255,0.07);padding:2px 8px;border-radius:4px;font-family:monospace;font-size:11px;user-select:all;cursor:pointer">' + esc(origin) + '</span></li>' +
+        '<li>Set to <strong style="color:#22c55e">Enabled</strong> → tap <strong style="color:#d9f7ff">Relaunch</strong></li>' +
+        '<li>Return here and tap 🎤</li>' +
+        '</ol>';
+      messages.appendChild(card);
+      feed.scrollTop = feed.scrollHeight;
+      // tap to copy
+      card.querySelector('#flags-url').addEventListener('click', () => {
+        navigator.clipboard?.writeText(origin).then(() => toast('URL copied!')).catch(() => {});
+      });
+    }
+
+    function _playPhoneAudio(data, ctx) {
+      if (!ctx || ctx.state === 'closed') return;
+      const pcm = new Int16Array(data);
+      if (!pcm.length) return;
+      const buffer = ctx.createBuffer(1, pcm.length, 24000);
+      const samples = buffer.getChannelData(0);
+      for (let i = 0; i < pcm.length; i++) samples[i] = pcm[i] / 32768;
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(ctx.destination);
+      const now = ctx.currentTime;
+      if (_phoneAudioCursor < now || _phoneAudioCursor > now + 0.8) {
+        _phoneAudioCursor = now + 0.035;
+      }
+      source.start(_phoneAudioCursor);
+      _phoneAudioCursor += buffer.duration;
+    }
+
+    async function doMic(twoWay = false) {
+      if (_voiceWs) {
+        _stopVoice();
+        if (!twoWay) return false;
+      }
+
+      if (!navigator.mediaDevices?.getUserMedia) {
+        _showVoiceSetup();
+        return false;
+      }
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+        });
+      } catch (e) {
+        sys(e.name === 'NotAllowedError'
+          ? 'Microphone denied — tap the address bar lock and allow microphone.'
+          : 'Mic error: ' + e.message);
+        return false;
+      }
+
+      // 16 kHz context (fall back to native rate — _f32toPcm16 resamples)
+      let ctx;
+      try { ctx = new AudioContext({ sampleRate: 16000 }); }
+      catch (_) { ctx = new AudioContext(); }
+      if (ctx.state === 'suspended') await ctx.resume();
+
+      const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+      if (twoWay) {
+        try {
+          const outputWs = new WebSocket(
+            `${wsProto}://${location.host}/ws/phone-output?token=${encodeURIComponent(_authToken)}`
+          );
+          outputWs.binaryType = 'arraybuffer';
+          _phoneOutputWs = outputWs;
+          await new Promise((resolve, reject) => {
+            let opened = false;
+            const timeout = setTimeout(() => reject(new Error('Phone audio connection timed out.')), 8000);
+            outputWs.onopen = () => {
+              opened = true;
+              clearTimeout(timeout);
+              _phoneOutputPing = setInterval(() => {
+                if (outputWs.readyState === WebSocket.OPEN) outputWs.send('ping');
+              }, 15000);
+              resolve();
+            };
+            outputWs.onmessage = event => _playPhoneAudio(event.data, ctx);
+            outputWs.onerror = () => {
+              if (!opened) {
+                clearTimeout(timeout);
+                reject(new Error('Phone audio connection failed.'));
+              }
+            };
+            outputWs.onclose = () => {
+              clearTimeout(timeout);
+              if (!opened) reject(new Error('Phone audio connection closed.'));
+              if (_phoneOutputWs === outputWs) {
+                _phoneOutputWs = null;
+                if (_voiceWs) {
+                  sys('Phone audio disconnected.');
+                  _stopVoice();
+                }
+              }
+            };
+          });
+        } catch (error) {
+          if (_phoneOutputPing) clearInterval(_phoneOutputPing);
+          _phoneOutputPing = null;
+          if (_phoneOutputWs) _phoneOutputWs.close();
+          _phoneOutputWs = null;
+          stream.getTracks().forEach(track => track.stop());
+          await ctx.close();
+          sys(error.message);
+          return false;
+        }
+      }
+
+      const ws = new WebSocket(
+        `${wsProto}://${location.host}/ws/phone-audio?token=${encodeURIComponent(_authToken)}`
+      );
+      ws.binaryType = 'arraybuffer';
+      let voiceOpened = false;
+      let resolveVoice;
+      let rejectVoice;
+      const voiceReady = new Promise((resolve, reject) => {
+        resolveVoice = resolve;
+        rejectVoice = reject;
+      });
+      const voiceTimeout = setTimeout(() => {
+        if (!voiceOpened) rejectVoice(new Error('Phone microphone connection timed out.'));
+      }, 8000);
+
+      ws.onopen = async () => {
+        try {
+          const rate = ctx.sampleRate;
+          const src  = ctx.createMediaStreamSource(stream);
+
+          // AudioWorklet (modern) — runs in dedicated audio thread
+          const wCode = `class J extends AudioWorkletProcessor{process(i){const c=i[0]?.[0];if(c)this.port.postMessage(c.slice());return true;}}registerProcessor('j',J);`;
+          try {
+            const burl = URL.createObjectURL(new Blob([wCode], { type: 'application/javascript' }));
+            try { await ctx.audioWorklet.addModule(burl); }
+            finally { URL.revokeObjectURL(burl); }
+            const nd = new AudioWorkletNode(ctx, 'j');
+            let _pbuf = [], _plen = 0;
+            nd.port.onmessage = e => {
+              const chunk = new Int16Array(_f32toPcm16(e.data, rate));
+              _pbuf.push(chunk); _plen += chunk.length;
+              if (_plen >= 1024) {
+                const out = new Int16Array(_plen); let off = 0;
+                for (const c of _pbuf) { out.set(c, off); off += c.length; }
+                if (ws.readyState === 1) ws.send(out.buffer);
+                _pbuf = []; _plen = 0;
+              }
+            };
+            const silence = ctx.createGain();
+            silence.gain.value = 0;
+            src.connect(nd);
+            nd.connect(silence);
+            silence.connect(ctx.destination);
+            _audioNd = nd;
+            _audioSink = silence;
+          } catch (error) {
+            console.warn('AudioWorklet unavailable; using ScriptProcessor:', error);
+            const sp = ctx.createScriptProcessor(4096, 1, 1);
+            sp.onaudioprocess = e => {
+              if (ws.readyState === 1) ws.send(_f32toPcm16(e.inputBuffer.getChannelData(0), rate));
+            };
+            const silence = ctx.createGain();
+            silence.gain.value = 0;
+            src.connect(sp);
+            sp.connect(silence);
+            silence.connect(ctx.destination);
+            _audioNd = sp;
+            _audioSink = silence;
+          }
+
+          micBtn.innerHTML = '⏹';
+          micBtn.title     = 'Tap to stop';
+          micBtn.classList.add('recording');
+          _twoWayActive = twoWay;
+          if (twoWay) document.getElementById('call-btn').textContent = '⏹  END CALL';
+          if (twoWay) _populateCallOutputs(ctx);
+          sys('Voice live — speak now');
+          toast(twoWay ? 'Two-way voice connected' : '🎤 Live');
+          voiceOpened = true;
+          clearTimeout(voiceTimeout);
+          resolveVoice(true);
+        } catch (error) {
+          clearTimeout(voiceTimeout);
+          rejectVoice(error);
+          _stopVoice();
+        }
+      };
+
+      ws.onclose = () => {
+        clearTimeout(voiceTimeout);
+        if (!voiceOpened) rejectVoice(new Error('Phone microphone connection closed.'));
+        else _stopVoice();
+      };
+      ws.onerror = () => {
+        clearTimeout(voiceTimeout);
+        if (!voiceOpened) rejectVoice(new Error('Phone microphone connection failed.'));
+        else sys('Voice connection failed.');
+        _stopVoice();
+      };
+
+      _voiceWs  = ws;
+      _audioCtx = ctx;
+      _micStm   = stream;
+      try {
+        return await voiceReady;
+      } catch (error) {
+        sys(error.message);
+        _stopVoice();
+        return false;
+      }
+    }
+
+    async function _populateCallOutputs(ctx) {
+      const select = document.getElementById('call-output');
+      const supportsRouting = typeof ctx.setSinkId === 'function';
+      select.disabled = !supportsRouting;
+      select.title = supportsRouting
+        ? 'Choose a speaker, headset, or other audio output supported by your phone.'
+        : 'Your phone or browser controls the call audio route.';
+      if (!supportsRouting) return;
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const outputs = devices.filter(device => device.kind === 'audiooutput');
+        select.replaceChildren();
+        for (const [index, device] of outputs.entries()) {
+          const option = document.createElement('option');
+          option.value = device.deviceId || 'default';
+          option.textContent = device.label || `Audio output ${index + 1}`;
+          select.appendChild(option);
+        }
+        if (!select.options.length) {
+          const fallback = document.createElement('option');
+          fallback.value = 'default';
+          fallback.textContent = 'Default speaker / headset';
+          select.appendChild(fallback);
+        }
+        select.disabled = false;
+      } catch (error) {
+        console.warn('Audio output devices could not be enumerated:', error);
+      }
+    }
+
+    function _stopVoice() {
+      if (_audioNd)  { try { _audioNd.disconnect(); }  catch (_) {}; _audioNd  = null; }
+      if (_audioSink) { try { _audioSink.disconnect(); } catch (_) {}; _audioSink = null; }
+      if (_audioCtx) { try { _audioCtx.close(); }      catch (_) {}; _audioCtx = null; }
+      if (_micStm)   { _micStm.getTracks().forEach(t => t.stop()); _micStm = null; }
+      if (_phoneOutputPing) { clearInterval(_phoneOutputPing); _phoneOutputPing = null; }
+      if (_phoneOutputWs) {
+        const output = _phoneOutputWs;
+        _phoneOutputWs = null;
+        if (output.readyState < 2) output.close();
+      }
+      _phoneAudioCursor = 0;
+      if (_voiceWs)  {
+        const w = _voiceWs; _voiceWs = null;
+        if (w.readyState < 2) w.close();
+      }
+      _micIdle();
+    }
+
+    // Cache only the app shell; assistant data and credentials stay network-only.
+    if ('serviceWorker' in navigator && window.isSecureContext) {
+      navigator.serviceWorker.register('/service-worker.js').catch(error => {
+        console.warn('JARVIS offline shell could not be registered:', error);
+      });
+    }
+
+    const installButton = document.getElementById('install-btn');
+    const installGuide = document.getElementById('install-guide');
+    let installPrompt = null;
+    const appIsInstalled = () =>
+      window.matchMedia('(display-mode: standalone)').matches ||
+      window.navigator.standalone === true;
+    if (appIsInstalled()) installButton.hidden = true;
+    window.addEventListener('beforeinstallprompt', event => {
+      event.preventDefault();
+      installPrompt = event;
+      installButton.hidden = false;
+    });
+    document.getElementById('install-close').addEventListener('click', () => installGuide.close());
+    installButton.addEventListener('click', async () => {
+      if (installPrompt) {
+        await installPrompt.prompt();
+        const result = await installPrompt.userChoice;
+        if (result.outcome === 'accepted') toast('JARVIS added to your device');
+        installPrompt = null;
+        installButton.hidden = appIsInstalled();
+        return;
+      }
+
+      const isAppleMobile = /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      if (!window.isSecureContext) {
+        document.getElementById('install-intro').textContent =
+          'Your browser needs a secure HTTPS connection before it can install JARVIS.';
+        document.getElementById('install-steps').innerHTML =
+          '<li>Start JARVIS on your computer with its HTTPS support enabled.</li><li>Open <strong>Remote Control</strong> and scan a fresh QR code.</li><li>Accept the first-visit certificate confirmation if your browser shows one, then tap INSTALL again.</li>';
+      } else {
+        document.getElementById('install-intro').textContent = isAppleMobile
+          ? 'Install JARVIS from Safari to open it like a regular app.'
+          : 'Install JARVIS from your browser to open it like a regular app.';
+        document.getElementById('install-steps').innerHTML = isAppleMobile
+          ? '<li>Open this dashboard in Safari.</li><li>Tap <strong>Share</strong>.</li><li>Choose <strong>Add to Home Screen</strong>, then tap <strong>Add</strong>.</li>'
+          : '<li>Open this dashboard in your browser.</li><li>Open the browser menu.</li><li>Choose <strong>Install app</strong> or <strong>Add to Home screen</strong>.</li>';
+      }
+      installGuide.showModal();
+    });
+    window.addEventListener('appinstalled', () => {
+      installButton.hidden = true;
+      installPrompt = null;
+      toast('JARVIS app installed');
+    });
+  </script>
+</body>
+</html>
